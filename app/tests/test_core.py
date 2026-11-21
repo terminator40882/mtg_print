@@ -129,3 +129,15 @@ def test_pdf_builds(tmp_path):
     assert data.count(b"/Subtype /Image") == 1
     pdfgen.build_calibration_pdf(tmp_path / "cal.pdf", None)
     pdfgen.build_cut_test_pdf(tmp_path / "cut.pdf", {}, None)
+
+
+def test_mpc_preset_matches_mpcfill_definition():
+    """MPC-Fill (frontend/src/common/constants.ts): BleedEdgeMM = 0.12 in, Karte 63x88 mm.
+    Unser Preset (MPC-Vorlage 2.74"x3.74") schneidet praktisch dieselbe Fläche aus."""
+    w, h = 2192, 2992  # typisches MPC-Fill-Bild (~800 DPI)
+    fx, fy = imaging.bleed_fractions("mpc", w, h)
+    mpcfill_fx = 3.048 / (63 + 2 * 3.048)
+    mpcfill_fy = 3.048 / (88 + 2 * 3.048)
+    # Abweichung in mm auf der gedruckten Karte (63 mm Breite / 88 mm Höhe)
+    assert abs(fx - mpcfill_fx) * 69.1 < 0.05
+    assert abs(fy - mpcfill_fy) * 94.1 < 0.05

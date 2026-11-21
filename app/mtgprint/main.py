@@ -99,6 +99,9 @@ def _refresh_card(card: dict) -> dict:
     w, h = imaging.image_size(path)
     card["w"], card["h"] = w, h
     card["suggested_mode"] = imaging.suggest_mode(w, h)
+    rw, rh = (h, w) if int(card.get("rotation", 0)) % 180 == 90 else (w, h)
+    # Bleed, den das Seitenverhältnis dieses Bildes nahelegt (mm pro Seite) – zur Kontrolle
+    card["detected_bleed_mm"] = round(imaging.detect_bleed_inches(rw, rh) * config.MM_PER_INCH, 2)
     card["dpi"] = round(imaging.effective_dpi(w, h, card))
     thumb = imaging.make_thumbnail(path, card, config.THUMBS_DIR / f"{card['id']}.jpg")
     card.update(fx=thumb["fx"], fy=thumb["fy"], synthetic_bleed=thumb["synthetic"])
