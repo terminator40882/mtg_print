@@ -178,4 +178,6 @@ def test_pdf_image_passthrough_and_cache(tmp_path):
     _png(3288, 4488).save(big, "JPEG")
     src3, _, _ = imaging.pdf_image(big, {"bleed_mode": "mpc"}, "high", 600, 3.0, 63, 88)
     from PIL import Image
-    assert Image.open(src3).size[0] == pytest.approx(3288 / 2, abs=2)
+    fx, _ = imaging.bleed_fractions("mpc", 3288, 4488)
+    card_px = Image.open(src3).size[0] * (1 - 2 * fx)
+    assert card_px / (63 / 25.4) == pytest.approx(600, abs=1)  # 600 DPI bezogen auf 63 mm
