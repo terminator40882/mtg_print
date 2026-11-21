@@ -153,6 +153,12 @@ def _place(project: dict, ids: list[str]) -> int:
 @app.get("/api/cards")
 def list_cards():
     cards = storage.get_cards()
+    missing = [c for c in cards.values() if "detected_bleed_mm" not in c]
+    for c in missing:  # Karten aus älteren Versionen nachrüsten
+        w, h = (c["h"], c["w"]) if int(c.get("rotation", 0)) % 180 == 90 else (c["w"], c["h"])
+        c["detected_bleed_mm"] = round(imaging.detect_bleed_inches(w, h) * config.MM_PER_INCH, 2)
+    if missing:
+        storage.save_cards(cards)
     return sorted((_card_public(c) for c in cards.values()), key=lambda c: c.get("created", 0))
 
 
