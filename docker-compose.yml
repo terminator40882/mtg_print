@@ -1,0 +1,24 @@
+# MTG Print Studio – Proxy-Bögen erstellen, kalibrieren und auf dem Canon G650 drucken.
+#
+#   cp .env.example .env    # PRINTER_IP eintragen
+#   docker compose up -d --build
+#   -> http://localhost:8080
+services:
+  mtg-print:
+    build: ./app
+    image: mtg-print-studio:latest
+    container_name: mtg-print-studio
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      PRINTER_IP: ${PRINTER_IP:-}
+      PRINTER_URI: ${PRINTER_URI:-}
+      PRINTER_QUEUE: ${PRINTER_QUEUE:-Canon_G650}
+      PRINT_MEDIA_TYPE: ${PRINT_MEDIA_TYPE:-auto}
+      PRINT_QUALITY: ${PRINT_QUALITY:-high}
+      PRINT_INPUT_SLOT: ${PRINT_INPUT_SLOT:-auto}
+      TZ: ${TZ:-Europe/Berlin}
+    volumes:
+      # Karten, Projekte, Kalibrierung und erzeugte PDFs bleiben hier erhalten
+      - ./data:/data

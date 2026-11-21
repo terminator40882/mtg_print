@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MTG Print Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='14' y='6' width='36' height='52' rx='4' fill='%236d4aff'/%3E%3Crect x='19' y='11' width='26' height='20' rx='2' fill='%23fff' opacity='.85'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo"></span>MTG Print Studio</div>
+  <nav class="tabs">
+    <button data-view="editor" class="active">Layout</button>
+    <button data-view="library">Kartenbibliothek</button>
+    <button data-view="printer">Drucker</button>
+    <button data-view="calibration">Kalibrierung</button>
+    <button data-view="settings">Einstellungen</button>
+  </nav>
+  <div class="status">
+    <span id="pill-calib" class="pill" title="Aktives Kalibrierprofil"></span>
+    <span id="pill-printer" class="pill" title="Druckerstatus"></span>
+  </div>
+</header>
+
+<main>
+  <!-- ============================ LAYOUT-EDITOR ============================ -->
+  <section id="view-editor" class="view active">
+    <aside class="side left">
+      <div class="side-head">
+        <h3>Karten</h3>
+        <button class="btn small primary" data-action="open-upload">+ Hochladen</button>
+      </div>
+      <input id="lib-search" class="search" type="search" placeholder="Suchen…">
+      <div class="hint">Klick = in markierten Slot · Ziehen = platzieren · <b>+</b> = anhängen · Slot hierher ziehen = entfernen</div>
+      <div id="side-lib" class="side-lib"></div>
+    </aside>
+
+    <div class="center">
+      <div class="toolbar">
+        <select id="project-select" title="Projekt wählen"></select>
+        <button class="btn" data-action="project-new" title="Neues Projekt">Neu</button>
+        <button class="btn" data-action="project-rename">Umbenennen</button>
+        <button class="btn" data-action="project-duplicate">Duplizieren</button>
+        <button class="btn danger-ghost" data-action="project-delete">Löschen</button>
+        <span class="sep"></span>
+        <button class="btn icon" data-action="undo" title="Rückgängig (Strg+Z)">↶</button>
+        <button class="btn icon" data-action="redo" title="Wiederholen (Strg+Y)">↷</button>
+        <span class="sep"></span>
+        <label class="chk"><input type="checkbox" id="toggle-cuts" checked> Schnittlinien</label>
+        <label class="chk"><input type="checkbox" id="toggle-bleed" checked> Bleed</label>
+        <label class="zoom">Zoom <input type="range" id="zoom" min="0.6" max="2.2" step="0.1" value="1"></label>
+      </div>
+      <div id="pages" class="pages"></div>
+    </div>
+
+    <aside class="side right">
+      <div class="panel">
+        <div id="project-summary" class="summary"></div>
+        <div class="btn-col">
+          <button class="btn primary big" data-action="print-dialog">🖨 Drucken…</button>
+          <div class="btn-row">
+            <button class="btn" data-action="pdf-preview">PDF-Vorschau</button>
+            <button class="btn" data-action="pdf-download">PDF laden</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel" id="slot-panel"></div>
+      <details class="panel" open>
+        <summary>Schnell-Aktionen</summary>
+        <div class="btn-col">
+          <button class="btn" data-action="add-page">+ Leere Seite</button>
+          <button class="btn" data-action="compact" title="Alle Lücken schließen">Lücken schließen</button>
+          <button class="btn" data-action="remove-empty-pages">Leere Seiten entfernen</button>
+          <button class="btn" data-action="sort-name">Nach Name sortieren</button>
+          <button class="btn" data-action="import-mpcfill">MPC-Fill XML importieren…</button>
+          <button class="btn danger-ghost" data-action="clear-all">Alles leeren</button>
+        </div>
+      </details>
+      <details class="panel">
+        <summary>Layout dieses Projekts</summary>
+        <div id="project-layout"></div>
+        <button class="btn small" data-action="layout-as-default">Als Standard für neue Projekte</button>
+      </details>
+      <div class="kbd-help">
+        <b>Tastatur:</b> Pfeile = Slot wählen · Entf = leeren · Strg+D = duplizieren · Strg+C/V = kopieren/einfügen · Strg+Z/Y = rückgängig/wiederholen · Alt+Ziehen = kopieren statt tauschen
+      </div>
+    </aside>
+  </section>
+
+  <!-- ============================ BIBLIOTHEK ============================ -->
+  <section id="view-library" class="view">
+    <div class="lib-toolbar">
+      <button class="btn primary" data-action="open-upload">+ Bilder hochladen</button>
+      <input id="lib-search2" class="search" type="search" placeholder="Suchen…">
+      <span class="sep"></span>
+      <span id="lib-selcount" class="muted"></span>
+      <button class="btn" data-action="lib-select-all">Alle wählen</button>
+      <button class="btn" data-action="lib-select-none">Auswahl aufheben</button>
+      <button class="btn" data-action="lib-select-warn">Nur Warnungen</button>
+      <span class="sep"></span>
+      <label>Padding: <select id="bulk-bleed"></select></label>
+      <button class="btn" data-action="lib-bulk-bleed">Setzen</button>
+      <button class="btn" data-action="lib-bulk-rotate">↻ 90°</button>
+      <button class="btn" data-action="lib-add-project">Ins Projekt…</button>
+      <button class="btn danger-ghost" data-action="lib-delete">Löschen</button>
+    </div>
+    <div id="lib-grid" class="lib-grid"></div>
+  </section>
+
+  <!-- ============================ DRUCKER ============================ -->
+  <section id="view-printer" class="view scroll">
+    <div class="cols">
+      <div class="col">
+        <div class="card-box" id="printer-status"></div>
+        <div class="card-box" id="printer-ink"></div>
+      </div>
+      <div class="col">
+        <div class="card-box" id="printer-options"></div>
+        <div class="card-box" id="printer-jobs"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ KALIBRIERUNG ============================ -->
+  <section id="view-calibration" class="view scroll">
+    <div id="calibration" class="calib"></div>
+  </section>
+
+  <!-- ============================ EINSTELLUNGEN ============================ -->
+  <section id="view-settings" class="view scroll">
+    <div class="cols">
+      <div class="col">
+        <div class="card-box">
+          <h2>Standard-Layout für neue Projekte</h2>
+          <div id="settings-layout"></div>
+          <button class="btn primary" data-action="settings-save-layout">Speichern</button>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card-box">
+          <h2>Standard beim Hochladen</h2>
+          <div id="settings-upload"></div>
+          <button class="btn primary" data-action="settings-save-upload">Speichern</button>
+        </div>
+        <div class="card-box" id="settings-info"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="modal-root"></div>
+<div id="toasts"></div>
+<div id="drop-overlay"><div>Bilder / ZIP hier ablegen</div></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
