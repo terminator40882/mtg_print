@@ -260,6 +260,19 @@ def page_size_for(paper: str, borderless: bool, sizes: list[dict] | None = None)
     return sorted(pick, key=lambda sz: len(sz["name"]))[0]["name"]
 
 
+def paper_check(paper: str) -> dict:
+    """Vergleicht das Layout-Papier mit dem, was der Drucker als eingelegt meldet (media-ready)."""
+    attrs, _ = printer_attributes()
+    loaded = []
+    for name in (attrs or {}).get("media_ready", []):
+        dims = ipp.pwg_size_mm(name)
+        if dims:
+            loaded.append({"name": name, "w": round(dims[0], 1), "h": round(dims[1], 1)})
+    pw, ph = config.PAPER_SIZES_MM.get(paper, config.PAPER_SIZES_MM["A4"])
+    match = any(abs(m["w"] - pw) < 1.6 and abs(m["h"] - ph) < 1.6 for m in loaded)
+    return {"loaded": loaded, "match": match, "known": bool(loaded)}
+
+
 def raster_dpi(quality_choice: str | None = None) -> int:
     """Rasterauflösung, die CUPS für die gewählte Qualität an den Drucker schickt."""
     path = ppd_path()

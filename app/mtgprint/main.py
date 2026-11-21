@@ -550,6 +550,7 @@ def printer_status(project_id: str = "", paper: str = "", borderless: bool = Fal
         "recommended": printer.recommended_options(opts, paper, borderless) if opts else {},
         "effective": printer.effective_options(s["print"]["options"], paper, borderless) if opts else {},
         "paper": paper, "borderless": borderless,
+        "paper_check": printer.paper_check(paper) if st["configured"] else None,
         "page_sizes": printer.ppd_page_sizes() if opts else [],
         "saved": s["print"]["options"],
         "raster_dpi": printer.raster_dpi(
@@ -587,6 +588,8 @@ def printer_diagnostics():
         "attributes_error": err,
         "queue_state": printer.queue_state(),
         "effective_options": printer.effective_options(s["print"]["options"]) if st["queue_ready"] else {},
+        "ppd_page_sizes": printer.ppd_page_sizes(),
+        "paper_check_13x18": printer.paper_check("13x18") if st["configured"] else None,
         "jobs": printer.jobs(limit=5),
         "cups_log": printer.cups_log(250),
     }

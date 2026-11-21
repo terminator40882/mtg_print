@@ -6,6 +6,7 @@ unterstützte Papiertypen anzeigen kann.
 """
 from __future__ import annotations
 
+import re
 import ssl
 import struct
 import urllib.parse
@@ -166,6 +167,16 @@ def get_printer_attributes(uri: str, timeout: float = 6.0) -> dict:
     return attrs
 
 
+def pwg_size_mm(name: str) -> tuple[float, float] | None:
+    """Maße aus einem PWG-Mediennamen, z.B. 'na_5x7_5x7in' -> (127.0, 177.8),
+    'jpn_photo-2l_127x177.8mm' -> (127.0, 177.8)."""
+    m = re.search(r"_(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)(mm|in)$", name or "")
+    if not m:
+        return None
+    f = 25.4 if m.group(3) == "in" else 1.0
+    return float(m.group(1)) * f, float(m.group(2)) * f
+
+
 def summarize(attrs: dict) -> dict:
     def one(k, d=None):
         v = attrs.get(k)
@@ -192,6 +203,7 @@ def summarize(attrs: dict) -> dict:
         "markers": markers,
         "media_types": attrs.get("media-type-supported", []),
         "media_ready": attrs.get("media-ready", []),
+        "media_supported": attrs.get("media-supported", []),
         "media_sources": attrs.get("media-source-supported", []),
         "formats": attrs.get("document-format-supported", []),
         "qualities": attrs.get("print-quality-supported", []),

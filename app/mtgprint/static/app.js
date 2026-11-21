@@ -960,6 +960,14 @@ async function openPrintDialog() {
   const matching = S.calib ? S.calib.profiles.find((p) => p.paper === pkey) : null;
   const profActive = matching ? matching.id : (S.calib ? S.calib.active : 'default');
   if (ready && !pr.effective.PageSize) warn += `<div class="alert bad">Der Drucker meldet keine Seitengröße für ${esc(S.info.paper_labels[lay.paper] || lay.paper)}${lay.borderless ? ' randlos' : ''}. Bitte unten manuell wählen.</div>`;
+  const pc = pr.paper_check;
+  const paperName = esc(S.info.paper_labels[lay.paper] || lay.paper);
+  if (pc && pc.known && !pc.match) {
+    warn += `<div class="alert bad"><b>Papier passt nicht:</b> Der Drucker meldet als eingelegt <b>${pc.loaded.map((m) => `${esc(m.name)} (${fmt(m.w)} × ${fmt(m.h)} mm)`).join(', ')}</b>, das Layout braucht ${paperName}.
+      Beim Einlegen am Drucker-Display Papiergröße passend einstellen (13×18 = „2L/5x7“) – sonst meldet der Drucker „falsches Papierformat“.</div>`;
+  } else if (pc && pc.known) {
+    warn += `<div class="alert ok">Laut Drucker eingelegt: ${pc.loaded.map((m) => esc(m.name)).join(', ')} ✓</div>`;
+  }
   if (!matching && pkey !== 'A4') warn += `<div class="alert info">Noch kein Kalibrierprofil für „${esc(pkey)}“. Tipp: unter Kalibrierung eins für dieses Papier anlegen.</div>`;
   const body = `${warn}
     <div class="form">

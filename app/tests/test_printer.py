@@ -97,3 +97,15 @@ def test_build_request_roundtrip():
     req = ipp.build_request("ipp://192.168.1.5/ipp/print")
     assert req[:4] == bytes([2, 0, 0, 0x0B])
     assert b"printer-uri" in req and req.endswith(bytes([0x03]))
+
+
+def test_pwg_size_and_paper_check(monkeypatch):
+    assert ipp.pwg_size_mm("na_5x7_5x7in") == pytest.approx((127.0, 177.8))
+    assert ipp.pwg_size_mm("jpn_photo-2l_127x177.8mm") == pytest.approx((127.0, 177.8))
+    assert ipp.pwg_size_mm("iso_a4_210x297mm") == (210.0, 297.0)
+    assert ipp.pwg_size_mm("auto") is None
+    monkeypatch.setattr(printer, "printer_attributes", lambda: ({"media_ready": ["iso_a4_210x297mm"]}, ""))
+    chk = printer.paper_check("13x18")
+    assert chk["known"] and not chk["match"]
+    monkeypatch.setattr(printer, "printer_attributes", lambda: ({"media_ready": ["na_5x7_5x7in"]}, ""))
+    assert printer.paper_check("13x18")["match"]
