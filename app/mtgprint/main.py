@@ -539,6 +539,8 @@ def printer_status():
         "recommended": printer.recommended_options(opts) if opts else {},
         "effective": printer.effective_options(s["print"]["options"]) if opts else {},
         "saved": s["print"]["options"],
+        "raster_dpi": printer.raster_dpi(
+            printer.effective_options(s["print"]["options"]).get("cupsPrintQuality")) if opts else None,
     }
 
 

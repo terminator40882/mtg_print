@@ -994,6 +994,7 @@ async function renderPrinter() {
       <div>CUPS-Queue</div><div>${pr.queue_ready ? `<span class="badge ok">bereit</span> <code>${esc(pr.queue)}</code>` : pr.setting_up ? 'wird eingerichtet…' : '<span class="badge bad">nicht bereit</span>'}</div>
       <div>Papier eingelegt</div><div>${a && a.media_ready.length ? esc(a.media_ready.join(', ')) : '–'}</div>
       <div>Formate</div><div class="muted" style="font-size:12px">${a ? esc(a.formats.join(', ')) : '–'}</div>
+      <div>Raster-Auflösung</div><div>${pr.raster_dpi ? `${pr.raster_dpi} dpi <span class="muted" style="font-size:12px">(so kommt der Druck beim Drucker an; Bilder werden darauf skaliert)</span>` : '–'}${a && a.resolutions.length ? `<div class="muted" style="font-size:12px">Drucker meldet: ${esc(a.resolutions.join(', '))}</div>` : ''}</div>
       ${a && a.firmware ? `<div>Firmware</div><div>${esc(a.firmware)}</div>` : ''}
     </div>
     <div class="btn-row">
