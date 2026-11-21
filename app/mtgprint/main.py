@@ -514,6 +514,23 @@ def printer_jobs():
     return printer.jobs()
 
 
+@app.get("/api/printer/diagnostics")
+def printer_diagnostics():
+    """Alles, was zur Fehlersuche nötig ist, in einem Block (zum Kopieren)."""
+    st = printer.status_basic()
+    attrs, err = printer.printer_attributes(max_age=0) if st["configured"] else (None, "")
+    s = storage.get_settings()
+    return {
+        "status": st,
+        "attributes": attrs,
+        "attributes_error": err,
+        "queue_state": printer.queue_state(),
+        "effective_options": printer.effective_options(s["print"]["options"]) if st["queue_ready"] else {},
+        "jobs": printer.jobs(limit=5),
+        "cups_log": printer.cups_log(250),
+    }
+
+
 @app.post("/api/printer/jobs/{job_id}/cancel")
 def printer_cancel(job_id: str):
     printer.cancel(job_id)

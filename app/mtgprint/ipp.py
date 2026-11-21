@@ -37,6 +37,52 @@ def build_request(uri: str, request_id: int = 1, attrs=("all", "media-col-databa
     return body
 
 
+def build_job_request(job_uri: str, request_id: int = 1, user: str = "root") -> bytes:
+    """Get-Job-Attributes (0x0009) für einen Job der lokalen CUPS-Instanz."""
+    body = struct.pack(">BBHI", 2, 0, 0x0009, request_id)
+    body += bytes([TAG_OPERATION])
+    body += _attr(0x47, "attributes-charset", b"utf-8")
+    body += _attr(0x48, "attributes-natural-language", b"en")
+    body += _attr(0x45, "job-uri", job_uri.encode())
+    body += _attr(0x42, "requesting-user-name", user.encode())
+    body += _attr(0x44, "requested-attributes", b"all")
+    body += bytes([TAG_END])
+    return body
+
+
+JOB_STATES = {3: "wartend", 4: "angehalten", 5: "druckt", 6: "gestoppt",
+              7: "abgebrochen", 8: "fehlgeschlagen", 9: "fertig"}
+
+
+def get_local_job(job_num: int, timeout: float = 4.0) -> dict:
+    """Status eines Jobs direkt aus dem lokalen CUPS (inkl. Gründen bei Abbruch)."""
+    uri = f"ipp://localhost/jobs/{job_num}"
+    req = urllib.request.Request(f"http://localhost:631/jobs/{job_num}", data=build_job_request(uri),
+                                 method="POST", headers={"Content-Type": "application/ipp"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(req, timeout=timeout) as resp:
+        status, attrs = parse_response(resp.read())
+    if status >= 0x0400:
+        raise RuntimeError(f"IPP-Fehler 0x{status:04x}")
+
+    def one(k, d=None):
+        v = attrs.get(k)
+        return v[0] if v else d
+
+    return {
+        "state": JOB_STATES.get(one("job-state"), str(one("job-state"))),
+        "state_code": one("job-state"),
+        "reasons": attrs.get("job-state-reasons", []),
+        "printer_message": one("job-printer-state-message", ""),
+        "printer_reasons": attrs.get("job-printer-state-reasons", []),
+        "impressions": one("job-impressions-completed"),
+        "sheets": one("job-media-sheets-completed"),
+        "k_octets": one("job-k-octets"),
+        "format": one("document-format-supplied", one("document-format", "")),
+        "name": one("job-name", ""),
+    }
+
+
 def parse_response(data: bytes) -> tuple[int, dict]:
     if len(data) < 8:
         raise ValueError("Antwort zu kurz")

@@ -1016,11 +1016,52 @@ async function renderPrinter() {
 
 async function renderJobs() {
   const jobs = await api('GET', '/api/printer/jobs').catch(() => []);
+  S.jobs = jobs;
+  const badge = (j) => {
+    if (j.active) return `<span class="badge warn">${esc(j.state || 'aktiv')}</span>`;
+    if (j.ok) return '<span class="badge ok">fertig</span>';
+    return `<span class="badge bad">${esc(j.state || '?')}</span>`;
+  };
+  const reasons = (j) => (j.reasons || []).filter((r) => !['none', 'job-completed-successfully', 'processing-to-stop-point', 'job-printing'].includes(r));
   $('#printer-jobs').innerHTML = `<h2>Druckaufträge</h2>
-    ${jobs.length ? `<table class="jobs"><tr><th>Job</th><th>Zeit</th><th>Status</th><th></th></tr>
-      ${jobs.map((j) => `<tr><td>${esc(j.id)}</td><td>${esc(j.time)}</td><td>${j.state === 'aktiv' ? `<span class="badge warn">aktiv</span> ${esc(j.detail || '')}` : '<span class="badge ok">fertig</span>'}</td>
-      <td>${j.state === 'aktiv' ? `<button class="btn small danger-ghost" data-cancel="${esc(j.id)}">Abbrechen</button>` : ''}</td></tr>`).join('')}</table>
-      <div style="margin-top:8px"><button class="btn small danger-ghost" data-action="cancel-all">Alle aktiven abbrechen</button></div>` : '<div class="muted">Keine Aufträge</div>'}`;
+    ${jobs.length ? `<table class="jobs"><tr><th>Job</th><th>Name</th><th>Status</th><th></th></tr>
+      ${jobs.map((j) => `<tr><td>${esc(j.id)}</td><td>${esc(j.name || '')}<div class="muted" style="font-size:11px">${esc(j.time)}</div></td>
+      <td>${badge(j)} <span class="muted" style="font-size:11px">${esc([...reasons(j), j.printer_message].filter(Boolean).join(' · '))}</span></td>
+      <td style="white-space:nowrap"><button class="btn small" data-job-detail="${esc(j.id)}">Details</button>
+      ${j.active ? `<button class="btn small danger-ghost" data-cancel="${esc(j.id)}">Abbrechen</button>` : ''}</td></tr>`).join('')}</table>
+      <div style="margin-top:8px"><button class="btn small danger-ghost" data-action="cancel-all">Alle aktiven abbrechen</button></div>` : '<div class="muted">Keine Aufträge</div>'}
+    <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+      <b>Fehlersuche</b><div class="hint">Wird eine Seite nur teilweise oder gar nicht gedruckt: Diagnose öffnen, kopieren und mitschicken.</div>
+      <button class="btn small" data-action="printer-diagnostics">Diagnose-Bericht anzeigen</button></div>`;
+}
+
+function showJobDetail(id) {
+  const j = (S.jobs || []).find((x) => x.id === id);
+  if (!j) return;
+  const rows = [
+    ['Status', `${j.state} (${j.state_code ?? '?'})`], ['Gründe', (j.reasons || []).join(', ')],
+    ['Meldung Drucker', j.printer_message], ['Drucker-Gründe', (j.printer_reasons || []).join(', ')],
+    ['Seiten gedruckt', j.impressions ?? '–'], ['Blätter', j.sheets ?? '–'], ['Größe', `${j.k_octets ?? '?'} kB`],
+    ['Format', j.format], ['Zeit', j.time],
+  ];
+  modal({ title: `Auftrag ${j.id}`, body: `<div class="kv">${rows.map(([k, v]) => `<div>${k}</div><div>${esc(v || '–')}</div>`).join('')}</div>`, buttons: [{ label: 'OK', cls: 'primary' }] });
+}
+
+async function showDiagnostics() {
+  const d = await guard(() => api('GET', '/api/printer/diagnostics'));
+  if (!d) return;
+  const text = [
+    '== Status ==', JSON.stringify(d.status, null, 1),
+    '== Drucker (IPP) ==', d.attributes_error || JSON.stringify(d.attributes, null, 1),
+    '== Queue ==', d.queue_state, '== Optionen ==', JSON.stringify(d.effective_options),
+    '== Jobs ==', JSON.stringify(d.jobs, null, 1), '== CUPS-Log ==', d.cups_log,
+  ].join('\n');
+  modal({
+    title: 'Diagnose-Bericht', wide: true,
+    body: `<textarea id="diag-text" readonly style="width:100%;height:60vh;font-family:ui-monospace,monospace;font-size:11.5px">${esc(text)}</textarea>`,
+    buttons: [{ label: 'Kopieren', onClick: async (bg) => { const t = $('#diag-text', bg); t.select(); try { await navigator.clipboard.writeText(t.value); } catch (_) { document.execCommand('copy'); } toast('Kopiert', 'ok'); return false; } },
+      { label: 'Schließen', cls: 'primary' }],
+  });
 }
 
 function updatePrinterPill(pr) {
@@ -1316,6 +1357,7 @@ const ACTIONS = {
     renderPrinter();
   },
   'printer-options-reset': async () => { await guard(() => api('POST', '/api/printer/options', { options: {} }), 'Zurückgesetzt'); renderPrinter(); },
+  'printer-diagnostics': showDiagnostics,
   'cancel-all': async () => { await guard(() => api('POST', '/api/printer/jobs/cancel-all'), 'Abgebrochen'); renderJobs(); },
   'settings-save-layout': async () => {
     const r = await guard(() => api('PATCH', '/api/settings', { default_layout: readLayoutForm($('#settings-layout')) }), 'Gespeichert');
@@ -1335,6 +1377,8 @@ function setupGlobalEvents() {
     const a = e.target.closest('[data-action]');
     if (a && ACTIONS[a.dataset.action]) { e.preventDefault(); await ACTIONS[a.dataset.action](); return; }
     if (a && a.dataset.action && (a.dataset.action.startsWith('cal-') || a.dataset.action.startsWith('cut-'))) { e.preventDefault(); await calibAction(a.dataset.action); return; }
+    const jd = e.target.closest('[data-job-detail]');
+    if (jd) { showJobDetail(jd.dataset.jobDetail); return; }
     const c = e.target.closest('[data-cancel]');
     if (c) { await guard(() => api('POST', `/api/printer/jobs/${c.dataset.cancel}/cancel`), 'Abgebrochen'); renderJobs(); }
   });

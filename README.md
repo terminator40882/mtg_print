@@ -137,4 +137,10 @@ Ohne Docker funktioniert alles außer dem Drucken (dafür braucht es CUPS).
   das WLAN/LAN aktiv sein; IPP läuft auf Port 631. Test aus dem Container:
   `docker compose exec mtg-print sh -c 'ipptool -tv ipp://$PRINTER_IP/ipp/print get-printer-attributes.test'`
 - **Karten zu groß/klein** – Kalibrierung durchführen; sicherstellen, dass nicht randlos gedruckt wird.
+- **Seite nur teilweise gedruckt (bricht mitten auf dem Blatt ab):** Das PDF ist dann
+  vollständig, aber die Übertragung zum Drucker ist abgerissen. Unter *Drucker →
+  Druckaufträge* zeigt jeder Auftrag seinen echten Status (z.B. „fehlgeschlagen“,
+  „abgebrochen“) samt Meldung des Druckers; *Diagnose-Bericht anzeigen* sammelt Status,
+  Optionen, Jobs und CUPS-Log zum Kopieren. Für mehr Details `CUPS_LOG_LEVEL=debug` in
+  der `.env` setzen und `docker compose up -d` ausführen.
 - **Logs:** `docker compose logs -f`, CUPS-Log: `docker compose exec mtg-print cat /var/log/cups/error_log`

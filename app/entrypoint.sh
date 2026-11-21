@@ -3,8 +3,10 @@ set -e
 
 mkdir -p /data
 
-# CUPS nur lokal im Container betreiben (kein Sharing, kein Browsing)
-cupsctl --no-share-printers --no-remote-any --no-remote-admin >/dev/null 2>&1 || true
+# CUPS-Loglevel (info reicht für Job-Status; "debug" für tiefe Fehlersuche).
+# Muss VOR dem Start von cupsd gesetzt werden – cupsctl braucht einen laufenden cupsd.
+sed -i "s/^LogLevel .*/LogLevel ${CUPS_LOG_LEVEL:-info}/" /etc/cups/cupsd.conf
+grep -q "^MaxLogSize" /etc/cups/cupsd.conf || echo "MaxLogSize 2m" >> /etc/cups/cupsd.conf
 if ! lpstat -r >/dev/null 2>&1; then
   cupsd
 fi

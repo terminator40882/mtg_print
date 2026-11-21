@@ -342,7 +342,7 @@ def jobs(limit: int = 15) -> list[dict]:
     if not cups_available():
         return []
     out = []
-    for which, label in (("not-completed", "aktiv"), ("completed", "fertig")):
+    for which in ("not-completed", "completed"):
         try:
             r = _run(["lpstat", "-W", which, "-o", config.PRINTER_QUEUE], timeout=5)
         except Exception:
@@ -351,21 +351,26 @@ def jobs(limit: int = 15) -> list[dict]:
             m = _JOB_RE.match(line.strip())
             if m:
                 out.append({"id": m.group(1), "user": m.group(2), "size": int(m.group(3)),
-                            "time": m.group(4).strip(), "state": label})
-    active = [j for j in out if j["state"] == "aktiv"]
-    done = [j for j in out if j["state"] == "fertig"]
-    done.sort(key=lambda j: int(j["id"].rsplit("-", 1)[1]), reverse=True)
-    if active:
+                            "time": m.group(4).strip(), "active": which == "not-completed"})
+    out.sort(key=lambda j: (not j["active"], -int(j["id"].rsplit("-", 1)[1])))
+    out = out[:limit + sum(j["active"] for j in out)]
+    for j in out:
         try:
-            r = _run(["lpstat", "-l", "-o", config.PRINTER_QUEUE], timeout=5)
-            text = r.stdout
-            for j in active:
-                m = re.search(re.escape(j["id"]) + r".*?\n(?:\s+.*\n)*?\s+Status:\s*(.*)", text)
-                if m:
-                    j["detail"] = m.group(1).strip()
-        except Exception:
-            pass
-    return active + done[:limit]
+            j.update(ipp.get_local_job(int(j["id"].rsplit("-", 1)[1])))
+        except Exception as e:  # pragma: no cover - nur Diagnose
+            j.update(state="aktiv" if j["active"] else "?", reasons=[], printer_message=str(e))
+        bad = ("abort", "cancel", "error", "fail")
+        j["ok"] = j.get("state_code") == 9 and not any(
+            b in r for r in j.get("reasons", []) for b in bad)
+    return out
+
+
+def cups_log(lines: int = 200) -> str:
+    path = Path("/var/log/cups/error_log")
+    if not path.exists():
+        return "(noch kein CUPS-Log vorhanden)"
+    data = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    return "\n".join(data[-lines:])
 
 
 def cancel(job_id: str) -> None:
