@@ -310,11 +310,19 @@ function renderSideLib() {
 
 function visRect(slot, card) {
   const fx = card ? card.fx || 0 : 0, fy = card ? card.fy || 0 : 0;
-  const imgW = slot.w / (1 - 2 * fx), imgH = slot.h / (1 - 2 * fy);
-  const ax = fx * imgW, ay = fy * imgH;
+  const rot = !!slot.rotated;
+  // Karte im Bild ist immer hochkant; bei gedrehten Slots sind die Achsen vertauscht
+  const cw = rot ? slot.h : slot.w, ch = rot ? slot.w : slot.h;
+  const imgW = cw / (1 - 2 * fx), imgH = ch / (1 - 2 * fy);
+  let ax = fx * imgW, ay = fy * imgH;
+  if (rot) [ax, ay] = [ay, ax];
   const b = S.showBleed ? slot.bleed : { l: 0, r: 0, t: 0, b: 0 };
   const l = Math.min(b.l, ax), r = Math.min(b.r, ax), t = Math.min(b.t, ay), bt = Math.min(b.b, ay);
-  return { x: slot.x - l, y: slot.y - t, w: slot.w + l + r, h: slot.h + t + bt, ix: l - ax, iy: t - ay, iw: imgW, ih: imgH };
+  const v = { x: slot.x - l, y: slot.y - t, w: slot.w + l + r, h: slot.h + t + bt, iw: imgW, ih: imgH, rot };
+  // Bild so platzieren, dass sein Mittelpunkt auf der Slotmitte liegt (dann ggf. drehen)
+  v.ix = slot.x + slot.w / 2 - v.x - imgW / 2;
+  v.iy = slot.y + slot.h / 2 - v.y - imgH / 2;
+  return v;
 }
 
 function renderPages() {
@@ -331,7 +339,7 @@ function renderPages() {
       if (card) {
         const v = visRect(slot, card);
         inner += `<div class="slot-img" style="left:${v.x * k}px;top:${v.y * k}px;width:${v.w * k}px;height:${v.h * k}px">
-          <img src="${card.thumb}" draggable="false" style="left:${v.ix * k}px;top:${v.iy * k}px;width:${v.iw * k}px;height:${v.ih * k}px"></div>`;
+          <img src="${card.thumb}" draggable="false" style="left:${v.ix * k}px;top:${v.iy * k}px;width:${v.iw * k}px;height:${v.ih * k}px${v.rot ? ';transform:rotate(-90deg)' : ''}"></div>`;
       }
       const sel = S.sel && S.sel.p === pi && S.sel.s === si ? 'sel' : '';
       const low = card && card.dpi < 300 ? `<span class="lowdpi" title="Effektive Auflösung">${card.dpi} DPI</span>` : '';
@@ -376,12 +384,15 @@ function renderSummary() {
   const n = flat().filter(Boolean).length;
   const g = S.geo;
   const lay = S.project.layout;
-  const warn = g.fits ? '' : '<div class="alert warn wide">Raster + Bleed passt nicht aufs Papier!</div>';
+  let warn = g.fits ? '' : '<div class="alert warn wide">Raster + Bleed passt nicht aufs Papier!</div>';
+  if (g.fits && !g.printable) warn += '<div class="alert warn wide">Karten reichen in den nicht bedruckbaren Rand (oben 3, unten 5, seitlich 3,4 mm). Randlos drucken oder Karten quer stellen.</div>';
+  const paperTxt = `${esc(S.info.paper_labels[lay.paper] || lay.paper)}${lay.borderless ? ' · randlos' : ''}${lay.rotate_cards ? ' · quer' : ''}`;
   $('#project-summary').innerHTML = `
     <div class="k"><b>${n}</b><span>Karten</span></div>
     <div class="k"><b>${S.project.pages.length}</b><span>Seiten</span></div>
     <div class="k"><b>${g.cols}×${g.rows}</b><span>Raster</span></div>
     <div class="k"><b>${g.num_cuts}</b><span>Schnitte / Bogen</span></div>
+    <div class="k wide"><span>Papier</span> <b style="font-size:14px">${paperTxt}</b></div>
     <div class="k wide"><span>Kartengröße</span> <b style="font-size:14px">${fmt(lay.card_w)} × ${fmt(lay.card_h)} mm</b></div>${warn}`;
 }
 
@@ -413,7 +424,11 @@ function layoutFormHTML(l, prefix) {
   const chk = (key, label) => `<label class="chk full"><input type="checkbox" data-key="${key}" ${l[key] ? 'checked' : ''}> ${label}</label>`;
   return `<div class="form" data-layout-form="${prefix}">
     <h4>Papier & Karten</h4>
-    <label>Papier</label><select data-key="paper">${S.info.papers.map((p) => `<option ${p === l.paper ? 'selected' : ''}>${p}</option>`).join('')}</select>
+    <div class="full btn-row" style="flex-wrap:wrap">${Object.entries(S.info.presets).map(([k, p]) => `<button type="button" class="btn small" data-preset="${k}">${esc(p.label)}</button>`).join('')}</div>
+    <label>Papier</label><select data-key="paper">${S.info.papers.map((p) => `<option value="${p}" ${p === l.paper ? 'selected' : ''}>${esc(S.info.paper_labels[p] || p)}</option>`).join('')}</select>
+    ${chk('borderless', 'Randlos drucken')}
+    <div class="note">Randlos nur für Fotopapier sinnvoll (13×18: 2×2 Karten). Dafür ein eigenes Kalibrierprofil anlegen – randlos kann der Drucker minimal vergrößern.</div>
+    ${chk('rotate_cards', 'Karten quer (90° gedreht) platzieren')}
     ${num('card_w', 'Kartenbreite')}
     ${num('card_h', 'Kartenhöhe', 0.1, 'mm', 'Original Magic: 63 × 88 mm')}
     ${num('cols', 'Spalten', 1, '', '')}
@@ -567,6 +582,14 @@ function setupEditorEvents() {
     if (b.dataset.slotAct === 'edit') openCardDetail(id);
   });
 
+  $('#project-layout').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-preset]');
+    if (!b) return;
+    await flushSave();
+    const preset = S.info.presets[b.dataset.preset];
+    const p = await guard(() => api('PUT', `/api/projects/${S.project.id}`, { layout: preset.layout }));
+    if (p) { b.blur(); setProject(p); S.sel = { p: 0, s: 0 }; renderEditor(); toast(`Layout: ${preset.label}`, 'ok'); }
+  });
   $('#project-layout').addEventListener('input', onProjectLayoutChange);
   $('#project-layout').addEventListener('change', onProjectLayoutChange);
   $('#project-select').addEventListener('change', async (e) => { await flushSave(); openProject(e.target.value); });
@@ -895,6 +918,8 @@ function openMpcImport() {
 }
 
 // ------------------------------------------------------------------ PDF & Druck
+function paperKey(lay) { return lay.paper + (lay.borderless ? '-randlos' : ''); }
+
 function profileOptions(selected) {
   const profs = S.calib ? S.calib.profiles : [];
   return profs.map((p) => `<option value="${p.id}" ${p.id === selected ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
@@ -915,9 +940,11 @@ async function exportPdf(download) {
 async function openPrintDialog() {
   await flushSave();
   await loadCalibration();
-  const pr = await guard(() => api('GET', '/api/printer'));
+  const pr = await guard(() => api('GET', `/api/printer?project_id=${S.project.id}`));
   if (!pr) return;
   S.printer = pr;
+  const lay = S.project.layout;
+  const pkey = paperKey(lay);
   const curPage = (S.sel ? S.sel.p : 0) + 1;
   const ready = pr.configured && pr.queue_ready;
   let warn = '';
@@ -926,9 +953,14 @@ async function openPrintDialog() {
   const optSel = (key) => {
     const o = pr.options.find((x) => x.key === key);
     if (!o) return '';
-    return `<label>${esc(o.label)}</label><select data-opt="${key}">${o.choices.map((c) => `<option value="${esc(c.value)}" ${pr.effective[key] === c.value ? 'selected' : ''}>${esc(c.label)}${pr.recommended[key] === c.value ? ' ★' : ''}</option>`).join('')}</select>`;
+    const none = key === 'PageSize' && !pr.effective[key] ? '<option value="" selected>– bitte wählen –</option>' : '';
+    return `<label>${esc(o.label)}</label><select data-opt="${key}">${none}${o.choices.map((c) => `<option value="${esc(c.value)}" ${pr.effective[key] === c.value ? 'selected' : ''}>${esc(c.label)}${pr.recommended[key] === c.value ? ' ★' : ''}</option>`).join('')}</select>`;
   };
-  const profActive = S.calib ? S.calib.active : 'default';
+  // Kalibrierprofil passend zum Papier vorwählen (z.B. "13x18-randlos"), sonst das aktive
+  const matching = S.calib ? S.calib.profiles.find((p) => p.paper === pkey) : null;
+  const profActive = matching ? matching.id : (S.calib ? S.calib.active : 'default');
+  if (ready && !pr.effective.PageSize) warn += `<div class="alert bad">Der Drucker meldet keine Seitengröße für ${esc(S.info.paper_labels[lay.paper] || lay.paper)}${lay.borderless ? ' randlos' : ''}. Bitte unten manuell wählen.</div>`;
+  if (!matching && pkey !== 'A4') warn += `<div class="alert info">Noch kein Kalibrierprofil für „${esc(pkey)}“. Tipp: unter Kalibrierung eins für dieses Papier anlegen.</div>`;
   const body = `${warn}
     <div class="form">
       <label>Seiten</label>
@@ -940,7 +972,7 @@ async function openPrintDialog() {
       <label>Kopien</label><input type="number" id="pr-copies" min="1" max="99" value="1">
       <label>Kalibrierung</label><select id="pr-profile">${profileOptions(profActive)}</select>
       ${optSel('MediaType')}${optSel('cupsPrintQuality')}${optSel('InputSlot')}${optSel('ColorModel')}${optSel('PageSize')}
-      <div class="note">★ = empfohlen (Glossy II, hohe Qualität, A4 <b>nicht randlos</b> – randlos würde vergrößern!). Gedruckt wird immer 1:1 ohne Skalierung.</div>
+      <div class="note">★ = empfohlen: Glossy II, hohe Qualität, Seitengröße passend zum Layout (${esc(S.info.paper_labels[lay.paper] || lay.paper)}${lay.borderless ? ', <b>randlos</b>' : ', mit Rand'}). Gedruckt wird immer 1:1 ohne Skalierung.</div>
       <label class="chk full"><input type="checkbox" id="pr-remember"> Papier-/Qualitätsoptionen als Standard merken</label>
     </div>`;
   modal({
@@ -966,7 +998,7 @@ async function openPrintDialog() {
     let pages = $('input[name=pr-pages]:checked', bg).value;
     if (pages === 'custom') pages = $('#pr-custom', bg).value;
     const options = {};
-    $$('[data-opt]', bg).forEach((s) => { options[s.dataset.opt] = s.value; });
+    $$('[data-opt]', bg).forEach((s) => { if (s.value) options[s.dataset.opt] = s.value; });
     const prof = $('#pr-profile', bg).value;
     return { pages, copies: Number($('#pr-copies', bg).value) || 1, profile_id: prof, calibrated: true, options };
   }
@@ -1115,13 +1147,19 @@ const CALIB_SVG = `<svg class="diagram" viewBox="0 0 210 160" xmlns="http://www.
   <div class="hint" style="text-align:center">d wird wie c gemessen – von der oberen Kante bis zur unteren Linie D.</div>`;
 
 let calibSelected = null;
+let calibPaper = null;  // z.B. "A4", "13x18", "13x18-randlos"
+const CALIB_PAPERS = [['A4', 'A4'], ['13x18', '13×18 mit Rand'], ['13x18-randlos', '13×18 randlos']];
+const splitPaper = (key) => ({ paper: key.replace('-randlos', ''), borderless: key.endsWith('-randlos') });
+const paperLabel = (key) => (CALIB_PAPERS.find(([k]) => k === key) || [key, key])[1];
 async function renderCalibration() {
   await loadCalibration();
   const c = S.calib;
   if (!calibSelected || !c.profiles.find((p) => p.id === calibSelected)) calibSelected = c.active;
   const p = c.profiles.find((x) => x.id === calibSelected);
   const m = p.measurements || {};
-  const ref = c.ref;
+  if (!calibPaper) calibPaper = p.paper || (S.project ? paperKey(S.project.layout) : 'A4');
+  if (!CALIB_PAPERS.some(([k]) => k === calibPaper)) calibPaper = 'A4';
+  const ref = c.refs[splitPaper(calibPaper).paper];
   $('#calibration').innerHTML = `
     <div class="card-box">
       <h2>Kalibrierprofil</h2>
@@ -1139,6 +1177,8 @@ async function renderCalibration() {
       <div class="card-box">
         <h2><span class="step-n">1</span>Kalibrierseite drucken</h2>
         <p class="hint">Gleiches Papier wie für die Karten verwenden (Glossy II). Die Seite wird mit dem gewählten Profil gedruckt – so verfeinerst du die Kalibrierung schrittweise.</p>
+        <div class="form" style="margin:8px 0"><label>Papier</label><select id="cal-paper">${CALIB_PAPERS.map(([k, l]) => `<option value="${k}" ${k === calibPaper ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        ${p.paper && p.paper !== calibPaper ? `<div class="alert warn">Dieses Profil wurde für „${esc(paperLabel(p.paper))}“ kalibriert.</div>` : ''}
         <label class="chk"><input type="checkbox" id="cal-uncal"> Ohne Korrektur drucken (Neustart der Kalibrierung)</label>
         <div class="btn-row" style="margin-top:10px">
           <button class="btn primary" data-action="cal-print">🖨 Drucken</button>
@@ -1189,7 +1229,10 @@ function nudgeRow(key, label, value, unit, step) {
 let calibComputed = null;
 function setupCalibrationEvents() {
   const root = $('#calibration');
-  root.addEventListener('change', (e) => { if (e.target.id === 'cal-profile') { calibSelected = e.target.value; renderCalibration(); } });
+  root.addEventListener('change', (e) => {
+    if (e.target.id === 'cal-profile') { calibSelected = e.target.value; calibPaper = null; renderCalibration(); }
+    if (e.target.id === 'cal-paper') { calibPaper = e.target.value; calibComputed = null; renderCalibration(); }
+  });
   root.addEventListener('click', async (e) => {
     const n = e.target.closest('[data-nudge]');
     if (n) {
@@ -1204,7 +1247,7 @@ async function calibAction(act) {
   const uncal = $('#cal-uncal') && $('#cal-uncal').checked;
   if (act === 'cal-activate') { await guard(() => api('POST', '/api/calibration/active', { id: pid }), 'Profil aktiviert'); renderCalibration(); }
   if (act === 'cal-new') {
-    const name = await prompt('Neues Kalibrierprofil', 'Name', 'Glossy II');
+    const name = await prompt('Neues Kalibrierprofil', 'Name', `Glossy II ${paperLabel(calibPaper || 'A4')}`);
     if (!name) return;
     const p = await guard(() => api('POST', '/api/calibration/profiles', { name, copy_from: pid !== 'default' ? pid : null }));
     if (p) { calibSelected = p.id; renderCalibration(); toast('Profil angelegt und aktiviert', 'ok'); }
@@ -1220,7 +1263,7 @@ async function calibAction(act) {
     }
   }
   if (act === 'cal-print' || act === 'cal-pdf') {
-    const r = await guard(() => api('POST', '/api/calibration/page', { action: act === 'cal-print' ? 'print' : 'pdf', profile_id: pid, uncalibrated: uncal }));
+    const r = await guard(() => api('POST', '/api/calibration/page', { action: act === 'cal-print' ? 'print' : 'pdf', profile_id: pid, uncalibrated: uncal, ...splitPaper(calibPaper) }));
     if (r) { if (r.job) toast(`Kalibrierseite gesendet (${r.job})`, 'ok'); else window.open(r.url, '_blank'); }
   }
   if (act === 'cut-print' || act === 'cut-pdf') {
@@ -1232,9 +1275,9 @@ async function calibAction(act) {
     if (v.some((x) => x === '')) return toast('Bitte alle vier Messwerte eintragen');
     const [a, b, c, d] = v.map(Number);
     const printedWith = !uncal;
-    const r = await guard(() => api('POST', '/api/calibration/compute', { a, b, c, d, profile_id: pid, printed_with_profile: printedWith }));
+    const r = await guard(() => api('POST', '/api/calibration/compute', { a, b, c, d, profile_id: pid, printed_with_profile: printedWith, paper: splitPaper(calibPaper).paper }));
     if (!r) return;
-    calibComputed = { ...r.result, measurements: { a, b, c, d } };
+    calibComputed = { ...r.result, measurements: { a, b, c, d }, paper: calibPaper };
     const meas = r.measured;
     const resid = Math.abs(meas.offset_x) < 0.15 && Math.abs(meas.offset_y) < 0.15 && Math.abs(meas.scale_x - 1) < 0.001 && Math.abs(meas.scale_y - 1) < 0.001;
     $('#cal-result').innerHTML = `<div class="alert ${resid ? 'ok' : 'info'}">
@@ -1246,7 +1289,7 @@ async function calibAction(act) {
   if (act === 'cal-apply' && calibComputed) {
     let target = pid;
     if (pid === 'default') {
-      const p = await guard(() => api('POST', '/api/calibration/profiles', { name: 'Glossy II' }));
+      const p = await guard(() => api('POST', '/api/calibration/profiles', { name: `Glossy II ${paperLabel(calibPaper)}` }));
       if (!p) return;
       target = p.id;
     }

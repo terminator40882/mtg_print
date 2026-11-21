@@ -17,6 +17,8 @@ DEFAULT_LAYOUT = {
     "cols": 0,             # 0 = automatisch (A4: 3)
     "rows": 0,             # 0 = automatisch (A4: 3)
     "gap": 0.0,            # Abstand zwischen Karten; 0 = Karten stoßen aneinander (8 Schnitte)
+    "rotate_cards": False, # Karten um 90° gedreht (quer) platzieren, z.B. 13x18 mit Rand
+    "borderless": False,   # Randlos drucken (z.B. 13x18: 2x2 Karten)
     "outer_bleed": 3.0,    # wie weit das Bild an den Außenkanten über die Schnittlinie reicht
     "offset_x": 0.0,       # bewusste Verschiebung des Rasters (zusätzlich zur Kalibrierung)
     "offset_y": 0.0,
@@ -67,9 +69,18 @@ def normalize_layout(data: dict | None) -> dict:
     return out
 
 
+def slot_size(layout: dict) -> tuple[float, float]:
+    """Größe eines Slots auf dem Blatt (bei gedrehten Karten vertauscht)."""
+    if layout.get("rotate_cards"):
+        return layout["card_h"], layout["card_w"]
+    return layout["card_w"], layout["card_h"]
+
+
 def grid_size(layout: dict) -> tuple[int, int]:
     pw, ph = config.PAPER_SIZES_MM[layout["paper"]]
-    cw, ch, gap, m = layout["card_w"], layout["card_h"], layout["gap"], layout["min_margin"]
+    cw, ch = slot_size(layout)
+    gap = layout["gap"]
+    m = 0.0 if layout.get("borderless") else layout["min_margin"]
     auto_c = max(1, math.floor((pw - 2 * m + gap) / (cw + gap) + 1e-9))
     auto_r = max(1, math.floor((ph - 2 * m + gap) / (ch + gap) + 1e-9))
     return (layout["cols"] or auto_c, layout["rows"] or auto_r)
@@ -85,7 +96,8 @@ def geometry(layout: dict) -> dict:
     layout = normalize_layout(layout)
     pw, ph = config.PAPER_SIZES_MM[layout["paper"]]
     cols, rows = grid_size(layout)
-    cw, ch, gap = layout["card_w"], layout["card_h"], layout["gap"]
+    cw, ch = slot_size(layout)
+    gap = layout["gap"]
     grid_w = cols * cw + (cols - 1) * gap
     grid_h = rows * ch + (rows - 1) * gap
     x0 = (pw - grid_w) / 2 + layout["offset_x"]
@@ -98,7 +110,7 @@ def geometry(layout: dict) -> dict:
             x = x0 + c * (cw + gap)
             y = y0 + r * (ch + gap)
             slots.append({
-                "index": r * cols + c, "row": r, "col": c,
+                "index": r * cols + c, "row": r, "col": c, "rotated": bool(layout["rotate_cards"]),
                 "x": x, "y": y, "w": cw, "h": ch,
                 # gewünschte Bleed-Ausdehnung je Seite (wird durch das Bild begrenzt)
                 "bleed": {
@@ -118,15 +130,25 @@ def geometry(layout: dict) -> dict:
 
     cuts_x = uniq([s["x"] for s in slots] + [s["x"] + cw for s in slots])
     cuts_y = uniq([s["y"] for s in slots] + [s["y"] + ch for s in slots])
+    pm = config.PRINTER_MARGINS_MM
+    margins = {"l": x0, "r": pw - x0 - grid_w, "t": y0, "b": ph - y0 - grid_h}
+    if layout["borderless"]:
+        fits = min(margins.values()) >= -1e-6
+        printable = fits
+    else:
+        fits = x0 - outer >= 0 and y0 - outer >= 0 and x0 + grid_w + outer <= pw and y0 + grid_h + outer <= ph
+        printable = all(margins[k] >= pm[k] - 1e-6 for k in pm)
     return {
         "page_w": pw, "page_h": ph, "cols": cols, "rows": rows,
+        "paper": layout["paper"], "borderless": layout["borderless"],
+        "rotate_cards": layout["rotate_cards"],
+        "printable": printable,
         "grid": {"x": x0, "y": y0, "w": grid_w, "h": grid_h},
         "outer_bleed": outer,
         "slots": slots, "cuts_x": cuts_x, "cuts_y": cuts_y,
         "num_cuts": len(cuts_x) + len(cuts_y),
-        "margins": {"l": x0, "r": pw - x0 - grid_w, "t": y0, "b": ph - y0 - grid_h},
-        "fits": x0 - outer >= 0 and y0 - outer >= 0 and x0 + grid_w + outer <= pw
-                and y0 + grid_h + outer <= ph,
+        "margins": margins,
+        "fits": fits,
     }
 
 
@@ -139,3 +161,21 @@ def reflow(pages: list[list], per_page: int) -> list[list]:
     for p in out:
         p.extend([None] * (per_page - len(p)))
     return out
+
+
+# Fertige Voreinstellungen (in der Oberfläche als Buttons)
+PRESETS = {
+    "a4": {"label": "A4 · 9 Karten", "layout": {"paper": "A4", "borderless": False, "rotate_cards": False,
+                                                 "cols": 0, "rows": 0, "gap": 0.0, "offset_x": 0.0, "offset_y": 0.0}},
+    "13x18-borderless": {"label": "13×18 randlos · 4 Karten",
+                         "layout": {"paper": "13x18", "borderless": True, "rotate_cards": False,
+                                    "cols": 2, "rows": 2, "gap": 0.0, "offset_x": 0.0, "offset_y": 0.0}},
+    "13x18": {"label": "13×18 mit Rand · 2 Karten quer",
+              "layout": {"paper": "13x18", "borderless": False, "rotate_cards": True,
+                         "cols": 1, "rows": 2, "gap": 0.0, "offset_x": 0.0, "offset_y": 0.0}},
+}
+
+
+def paper_key(layout: dict) -> str:
+    """Schlüssel für Papier + Randlos (Kalibrierprofile gelten je Papiersorte)."""
+    return layout["paper"] + ("-randlos" if layout.get("borderless") else "")

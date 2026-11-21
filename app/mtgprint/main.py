@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, calibration, config, imaging, mpcfill, pdfgen, printer, storage
-from .layout import geometry, normalize_layout, reflow, slots_per_page
+from .layout import PRESETS, geometry, normalize_layout, paper_key, reflow, slots_per_page
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("mtgprint")
@@ -66,6 +66,8 @@ def info():
         "printer_uri": config.printer_uri(),
         "bleed_modes": imaging.BLEED_MODES,
         "papers": list(config.PAPER_SIZES_MM),
+        "paper_labels": config.PAPER_LABELS,
+        "presets": {k: v for k, v in PRESETS.items()},
         "card_default": [config.DEFAULT_CARD_W_MM, config.DEFAULT_CARD_H_MM],
         "calibration_ref": calibration.REF,
     }
@@ -449,7 +451,12 @@ def project_pdf(pid: str, payload: dict = Body(default={})):
 @app.post("/api/projects/{pid}/print")
 def project_print(pid: str, payload: dict = Body(default={})):
     s = storage.get_settings()
-    opts = printer.effective_options({**s["print"]["options"], **(payload.get("options") or {})})
+    lay = storage.get_project(pid)["layout"]
+    opts = printer.effective_options(s["print"]["options"], lay["paper"], lay["borderless"])
+    opts = printer.apply_overrides(opts, payload.get("options"))
+    if "PageSize" not in opts:
+        raise RuntimeError(f"Der Drucker meldet keine passende Seitengröße für {config.PAPER_LABELS.get(lay['paper'], lay['paper'])}"
+                           f"{' (randlos)' if lay['borderless'] else ''}. Bitte im Druckdialog eine Seitengröße wählen.")
     # Bilder direkt auf die Rasterauflösung des Druckers bringen (hochwertiges Lanczos
     # statt Ghostscript-Abtastung, deutlich kleinere Druckdaten)
     dpi = printer.raster_dpi(opts.get("cupsPrintQuality"))
@@ -525,19 +532,25 @@ def get_export(name: str, download: bool = False):
 # Drucker
 # ---------------------------------------------------------------------------
 @app.get("/api/printer")
-def printer_status():
+def printer_status(project_id: str = "", paper: str = "", borderless: bool = False):
     st = printer.status_basic()
     attrs, err = printer.printer_attributes() if st["configured"] else (None, "")
     s = storage.get_settings()
     opts = printer.ppd_options() if st["queue_ready"] else []
+    if project_id:
+        lay = storage.get_project(project_id)["layout"]
+        paper, borderless = lay["paper"], lay["borderless"]
+    paper = paper if paper in config.PAPER_SIZES_MM else "A4"
     return {
         **st,
         "attributes": attrs,
         "attributes_error": err,
         "queue_state": printer.queue_state() if st["queue_ready"] else "",
         "options": opts,
-        "recommended": printer.recommended_options(opts) if opts else {},
-        "effective": printer.effective_options(s["print"]["options"]) if opts else {},
+        "recommended": printer.recommended_options(opts, paper, borderless) if opts else {},
+        "effective": printer.effective_options(s["print"]["options"], paper, borderless) if opts else {},
+        "paper": paper, "borderless": borderless,
+        "page_sizes": printer.ppd_page_sizes() if opts else [],
         "saved": s["print"]["options"],
         "raster_dpi": printer.raster_dpi(
             printer.effective_options(s["print"]["options"]).get("cupsPrintQuality")) if opts else None,
@@ -601,6 +614,7 @@ def calibration_info():
         "profiles": [{**p, "description": calibration.describe(p)} for p in s["profiles"]],
         "active": s["active_profile"],
         "ref": calibration.REF,
+        "refs": {pk: calibration.ref_for(pk) for pk in config.PAPER_SIZES_MM},
     }
 
 
@@ -634,6 +648,8 @@ def calibration_update(prof_id: str, payload: dict = Body(...)):
                     p[k] = round(max(0.9, min(1.1, float(payload[k]))), 6)
             if "measurements" in payload:
                 p["measurements"] = payload["measurements"]
+            if "paper" in payload:
+                p["paper"] = payload["paper"] or None
             storage.save_settings(s)
             return {**p, "description": calibration.describe(p)}
     raise KeyError(prof_id)
@@ -663,8 +679,9 @@ def calibration_active(payload: dict = Body(...)):
 
 @app.post("/api/calibration/compute")
 def calibration_compute(payload: dict = Body(...)):
+    paper = payload.get("paper") if payload.get("paper") in config.PAPER_SIZES_MM else "A4"
     m = calibration.from_measurements(float(payload["a"]), float(payload["b"]),
-                                      float(payload["c"]), float(payload["d"]))
+                                      float(payload["c"]), float(payload["d"]), calibration.ref_for(paper))
     base = calibration.DEFAULT_PROFILE
     if payload.get("printed_with_profile", True):
         base = storage.get_profile(payload.get("profile_id"))
@@ -672,10 +689,13 @@ def calibration_compute(payload: dict = Body(...)):
     return {"measured": m, "result": total, "description": calibration.describe(total)}
 
 
-def _deliver(path: Path, action: str, title: str):
+def _deliver(path: Path, action: str, title: str, paper: str = "A4", borderless: bool = False):
     if action == "print":
         s = storage.get_settings()
-        opts = printer.effective_options(s["print"]["options"])
+        opts = printer.effective_options(s["print"]["options"], paper, borderless)
+        if "PageSize" not in opts:
+            raise RuntimeError(f"Der Drucker meldet keine passende Seitengröße für {paper}"
+                               f"{' (randlos)' if borderless else ''}")
         job = printer.print_pdf(path, opts, 1, title=title)
         return {"job": job, "url": f"/api/exports/{path.name}", "options": opts}
     return {"url": f"/api/exports/{path.name}"}
@@ -685,8 +705,10 @@ def _deliver(path: Path, action: str, title: str):
 def calibration_page(payload: dict = Body(default={})):
     profile = None if payload.get("uncalibrated") else storage.get_profile(payload.get("profile_id"))
     out = config.EXPORTS_DIR / f"Kalibrierseite_{time.strftime('%Y%m%d-%H%M%S')}.pdf"
-    pdfgen.build_calibration_pdf(out, profile)
-    return _deliver(out, payload.get("action", "pdf"), "Kalibrierseite")
+    paper = payload.get("paper") if payload.get("paper") in config.PAPER_SIZES_MM else "A4"
+    borderless = bool(payload.get("borderless"))
+    pdfgen.build_calibration_pdf(out, profile, paper, borderless)
+    return _deliver(out, payload.get("action", "pdf"), "Kalibrierseite", paper, borderless)
 
 
 @app.post("/api/calibration/cut-test")
@@ -697,7 +719,8 @@ def cut_test(payload: dict = Body(default={})):
         layout = storage.get_project(payload["project_id"])["layout"]
     out = config.EXPORTS_DIR / f"Probeschnitt_{time.strftime('%Y%m%d-%H%M%S')}.pdf"
     pdfgen.build_cut_test_pdf(out, layout, profile)
-    return _deliver(out, payload.get("action", "pdf"), "Probeschnitt")
+    lay = normalize_layout(layout)
+    return _deliver(out, payload.get("action", "pdf"), "Probeschnitt", lay["paper"], lay["borderless"])
 
 
 # ---------------------------------------------------------------------------

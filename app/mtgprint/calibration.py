@@ -12,8 +12,17 @@ from __future__ import annotations
 
 import uuid
 
+from . import config
+
 # Positionen der Messlinien auf der Kalibrierseite (mm von linker/oberer Kante)
 REF = {"A": 20.0, "B": 190.0, "C": 20.0, "D": 277.0}
+
+
+def ref_for(paper: str) -> dict:
+    """Messlinien je 20 mm (bzw. 15 mm bei kleinem Papier) von den Kanten entfernt."""
+    pw, ph = config.PAPER_SIZES_MM.get(paper, config.PAPER_SIZES_MM["A4"])
+    m = 20.0 if pw >= 180 else 15.0
+    return {"A": m, "B": round(pw - m, 1), "C": m, "D": round(ph - m, 1)}
 
 DEFAULT_PROFILE = {
     "id": "default",
@@ -24,6 +33,7 @@ DEFAULT_PROFILE = {
     "scale_y": 1.0,
     "notes": "",
     "measurements": None,
+    "paper": None,          # z.B. "A4", "13x18-randlos" – zur automatischen Auswahl beim Drucken
 }
 
 

@@ -104,6 +104,25 @@ belegen, beim Drucken „Aktuelle Seite“ oder eine Seitenauswahl wie `1-3,5` a
 Schnittmarken (Länge/Stärke/Abstand, „bis zum Blattrand“ für Schneidemaschinen),
 Seitenbeschriftung, Bildqualität.
 
+## 13 × 18 cm Fotopapier
+
+13 × 18 cm entspricht 5 × 7″ (127 × 178 mm). Im Layout-Panel gibt es dafür Voreinstellungen:
+
+| Voreinstellung | Karten | Hinweise |
+|---|---|---|
+| **13×18 randlos** | 4 (2 × 2, hochkant) | Nur 0,5 mm Papier pro Seite übrig – der Bleed läuft über die Blattkante. Schnittmarken sitzen als kurze weiße/schwarze Striche direkt am Blattrand; meist reichen die 2 Schnitte in der Mitte plus Kanten nachschneiden. |
+| **13×18 mit Rand** | 2 (quer, 90° gedreht) | Funktioniert ohne Randlosdruck, Karten liegen sicher im bedruckbaren Bereich. |
+
+Die passende Seitengröße (`5x7` bzw. `5x7.Borderless`) wird automatisch aus den Fähigkeiten des
+Druckers gewählt. Meldet der Drucker keine randlose Variante, bricht die App mit einer klaren
+Meldung ab, statt still mit Rand zu drucken (dann würden die Außenkarten abgeschnitten).
+
+**Wichtig bei randlos:** Canon-Drucker vergrößern beim Randlosdruck oft minimal (Überdruck
+über die Kante). Deshalb für „13×18 randlos“ ein **eigenes Kalibrierprofil** anlegen: Im Reiter
+Kalibrierung Papier „13×18 randlos“ wählen, Kalibrierseite drucken (Messlinien 15 mm vom Rand),
+messen, übernehmen. Der Maßstab-Ausgleich korrigiert die Vergrößerung. Beim Drucken wird das
+zum Papier passende Profil automatisch vorgewählt.
+
 ## Kalibrierung (Reiter „Kalibrierung“)
 
 Jeder Drucker druckt etwas versetzt und minimal skaliert. So gleichst du das aus:
@@ -124,7 +143,7 @@ Jeder Drucker druckt etwas versetzt und minimal skaliert. So gleichst du das aus
 
 ```bash
 cd app
-pip install -r requirements.txt pytest httpx
+pip install -r requirements.txt pytest httpx pymupdf
 DATA_DIR=./data-dev uvicorn mtgprint.main:app --reload --port 8080
 python -m pytest -q
 ```

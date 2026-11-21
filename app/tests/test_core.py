@@ -181,3 +181,37 @@ def test_pdf_image_passthrough_and_cache(tmp_path):
     fx, _ = imaging.bleed_fractions("mpc", 3288, 4488)
     card_px = Image.open(src3).size[0] * (1 - 2 * fx)
     assert card_px / (63 / 25.4) == pytest.approx(600, abs=1)  # 600 DPI bezogen auf 63 mm
+
+
+def test_13x18_layouts():
+    g = layout.geometry(layout.PRESETS["13x18-borderless"]["layout"])
+    assert (g["cols"], g["rows"]) == (2, 2) and g["fits"] and g["borderless"]
+    assert g["cuts_x"] == [0.5, 63.5, 126.5]
+    g = layout.geometry(layout.PRESETS["13x18"]["layout"])
+    assert (g["cols"], g["rows"]) == (1, 2) and g["printable"]
+    assert g["slots"][0]["w"] == 88 and g["slots"][0]["h"] == 63 and g["slots"][0]["rotated"]
+    # 13x18 hochkant mit Rand: nur eine Karte passt
+    g = layout.geometry({"paper": "13x18"})
+    assert (g["cols"], g["rows"]) == (1, 1)
+
+
+def test_13x18_pdfs(tmp_path):
+    from mtgprint import config
+    import pymupdf
+    p = config.CARDS_DIR / "x.png"
+    Image.new("RGB", (822, 1122), (200, 0, 0)).save(p)
+    cards = {"x": {"id": "x", "file": "x.png", "bleed_mode": "mpc"}}
+    for key, n in (("13x18-borderless", 4), ("13x18", 2)):
+        proj = {"name": "T", "layout": layout.PRESETS[key]["layout"], "pages": [["x"] * n]}
+        out = tmp_path / f"{key}.pdf"
+        assert pdfgen.build_project_pdf(proj, cards, out, None)["cards"] == n
+        page = pymupdf.open(out)[0]
+        assert round(page.rect.width / 72 * 25.4, 1) == 127.0
+        if key == "13x18":
+            # gedrehte Karte: Bild liegt quer (Breite > Höhe) und deckt Slot + Bleed ab
+            r = page.get_image_rects(page.get_images()[0][0])[0]
+            assert r.width > r.height
+            assert round(r.width / 72 * 25.4, 1) == pytest.approx(94.0, abs=0.3)
+    pdfgen.build_calibration_pdf(tmp_path / "cal.pdf", None, "13x18", True)
+    pdfgen.build_cut_test_pdf(tmp_path / "cut.pdf", layout.PRESETS["13x18"]["layout"], None)
+    assert calibration.ref_for("13x18") == {"A": 15.0, "B": 112.0, "C": 15.0, "D": 162.8}

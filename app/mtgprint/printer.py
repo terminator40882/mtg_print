@@ -225,6 +225,41 @@ def ppd_options() -> list[dict]:
     return [o for o in opts if o["choices"] and o["key"] not in hidden]
 
 
+def ppd_page_sizes() -> list[dict]:
+    """Seitengrößen aus der PPD: Name, Maße (mm) und ob randlos (bedruckbarer Bereich = Blatt)."""
+    path = ppd_path()
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    pt = 25.4 / 72
+    dims = {m.group(1): (float(m.group(2)) * pt, float(m.group(3)) * pt)
+            for m in re.finditer(r'\*PaperDimension ([^/:\s]+)[^:]*:\s*"([\d.]+)\s+([\d.]+)"', text)}
+    areas = {m.group(1): tuple(float(m.group(i)) * pt for i in range(2, 6))
+             for m in re.finditer(r'\*ImageableArea ([^/:\s]+)[^:]*:\s*"([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)"', text)}
+    out = []
+    for name, (w, h) in dims.items():
+        a = areas.get(name)
+        borderless = bool(a) and a[0] < 0.3 and a[1] < 0.3 and a[2] > w - 0.3 and a[3] > h - 0.3
+        out.append({"name": name, "w": w, "h": h, "borderless": borderless or "borderless" in name.lower()})
+    return out
+
+
+def page_size_for(paper: str, borderless: bool, sizes: list[dict] | None = None) -> str | None:
+    """Passende PPD-Seitengröße für Papier (z.B. 13x18 -> '5x7' bzw. '5x7.Borderless')."""
+    sizes = sizes if sizes is not None else ppd_page_sizes()
+    pw, ph = config.PAPER_SIZES_MM.get(paper, config.PAPER_SIZES_MM["A4"])
+    cands = [sz for sz in sizes if abs(sz["w"] - pw) < 1.6 and abs(sz["h"] - ph) < 1.6]
+    if not cands:
+        return None
+    # streng: randlos nur mit randloser Variante, mit Rand nur mit normaler Variante –
+    # sonst würden Außenkarten abgeschnitten bzw. das Bild vergrößert
+    pick = [sz for sz in cands if sz["borderless"] == borderless]
+    if not pick:
+        return None
+    # kürzester Name = Standardvariante (z.B. "A4" statt "A4.Fullbleed")
+    return sorted(pick, key=lambda sz: len(sz["name"]))[0]["name"]
+
+
 def raster_dpi(quality_choice: str | None = None) -> int:
     """Rasterauflösung, die CUPS für die gewählte Qualität an den Drucker schickt."""
     path = ppd_path()
@@ -260,8 +295,10 @@ def _score_media(value: str, label: str) -> int:
     return 0
 
 
-def recommended_options(opts: list[dict] | None = None) -> dict:
-    """Empfohlene Optionen: Glossy II, hohe Qualität, Farbe, A4 (NICHT randlos)."""
+def recommended_options(opts: list[dict] | None = None, paper: str = "A4", borderless: bool = False,
+                        sizes: list[dict] | None = None) -> dict:
+    """Empfohlene Optionen: Glossy II, hohe Qualität, Farbe, Seitengröße passend zum Papier
+    (A4 nicht randlos; randlos nur, wenn das Layout es verlangt)."""
     opts = opts if opts is not None else ppd_options()
     rec: dict[str, str] = {}
     by_key = {o["key"]: o for o in opts}
@@ -289,15 +326,10 @@ def recommended_options(opts: list[dict] | None = None) -> dict:
 
     ps = by_key.get("PageSize")
     if ps:
+        name = page_size_for(paper, borderless, sizes)
         vals = [c["value"] for c in ps["choices"]]
-        for cand in ("A4", "iso_a4_210x297mm"):
-            if cand in vals:
-                rec["PageSize"] = cand
-                break
-        else:
-            plain = [v for v in vals if v.lower().startswith("a4") and "borderless" not in v.lower()]
-            if plain:
-                rec["PageSize"] = plain[0]
+        if name in vals:
+            rec["PageSize"] = name
 
     cm = by_key.get("ColorModel")
     if cm:
@@ -319,12 +351,25 @@ def recommended_options(opts: list[dict] | None = None) -> dict:
     return rec
 
 
-def effective_options(saved: dict | None) -> dict:
+def effective_options(saved: dict | None, paper: str = "A4", borderless: bool = False) -> dict:
+    """Empfehlung + gespeicherte Vorlieben. Die Seitengröße kommt immer vom Layout."""
     opts = ppd_options()
-    rec = recommended_options(opts)
+    rec = recommended_options(opts, paper, borderless)
     valid = {o["key"]: {c["value"] for c in o["choices"]} for o in opts}
     out = dict(rec)
     for k, v in (saved or {}).items():
+        if k == "PageSize":
+            continue
+        if k in valid and v in valid[k]:
+            out[k] = v
+    return out
+
+
+def apply_overrides(opts: dict, overrides: dict | None) -> dict:
+    """Explizit im Druckdialog gewählte Optionen übernehmen (nur gültige Werte)."""
+    valid = {o["key"]: {c["value"] for c in o["choices"]} for o in ppd_options()}
+    out = dict(opts)
+    for k, v in (overrides or {}).items():
         if k in valid and v in valid[k]:
             out[k] = v
     return out

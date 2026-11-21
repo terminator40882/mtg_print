@@ -59,8 +59,16 @@ SYNTHETIC_BLEED_MM = 3.0
 
 PAPER_SIZES_MM = {
     "A4": (210.0, 297.0),
+    "13x18": (127.0, 177.8),   # 13 x 18 cm Fotopapier = 5 x 7 Zoll
     "Letter": (215.9, 279.4),
 }
+PAPER_LABELS = {
+    "A4": "A4 (210 × 297 mm)",
+    "13x18": "13 × 18 cm Foto (5 × 7″)",
+    "Letter": "US Letter",
+}
+# Nicht bedruckbarer Rand bei Druck MIT Rand (Canon PIXMA: oben 3, unten 5, seitlich 3,4 mm)
+PRINTER_MARGINS_MM = {"l": 3.4, "r": 3.4, "t": 3.0, "b": 5.0}
 
 # Parallelität (Bildaufbereitung, Thumbnails). 0 = alle Kerne
 WORKERS = int(_env("WORKERS", "0") or 0) or (os.cpu_count() or 2)
