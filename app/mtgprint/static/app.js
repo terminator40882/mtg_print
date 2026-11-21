@@ -133,9 +133,11 @@ function cardWarnings(c) {
   const hasPad = !['none'].includes(c.bleed_mode);
   if (c.suggested_mode === 'none' && hasPad && c.bleed_mode !== 'custom') w.push({ cls: 'warn', text: 'Sieht aus wie ohne Padding' });
   if (c.suggested_mode === 'mpc' && c.bleed_mode === 'none') w.push({ cls: 'warn', text: 'Sieht aus wie mit Padding' });
-  const presetMm = { mpc: 3.048, eighth: 3.175 }[c.bleed_mode];
-  if (presetMm && c.detected_bleed_mm > 0.5 && Math.abs(c.detected_bleed_mm - presetMm) > 0.4) {
-    w.push({ cls: 'warn', text: `Bild hat eher ${fmt(c.detected_bleed_mm, 2)} mm Bleed` });
+  if (['mpc', 'auto'].includes(c.bleed_mode) && c.detected_mismatch_pct > 0.5) {
+    w.push({ cls: 'warn', text: 'Bildformat passt zu keiner Bleed-Konvention' });
+  }
+  if (c.bleed_mode === 'eighth' && c.detected_bleed_mm > 0.5 && Math.abs(c.detected_bleed_mm - 3.175) > 0.1) {
+    w.push({ cls: 'warn', text: `Bild passt eher zu ${c.detected_convention}` });
   }
   return w;
 }
@@ -690,7 +692,7 @@ function openCardDetail(id) {
       <div class="full muted" style="font-size:12px;line-height:1.6">
         Datei: ${esc(c.original_name)}<br>${c.w} × ${c.h} px · effektiv <b>${c.dpi} DPI</b><br>
         Seitenverhältnis spricht für: <b>${c.suggested_mode === 'none' ? 'ohne Padding' : 'mit Padding (MPC)'}</b><br>
-        Bleed laut Seitenverhältnis: <b>${fmt(c.detected_bleed_mm ?? 0, 2)} mm</b> pro Seite bei 63 × 88 mm Karte (MPC-Vorgabe 3,05 mm, 1/8″ = 3,18 mm)<br>
+        Erkannte Konvention: <b>${esc(c.detected_convention || '–')}</b> · ${c.detected_dpi || '?'} DPI (Achsen-Abweichung ${fmt(c.detected_mismatch_pct ?? 0, 3)} %)<br>
         Die gestrichelte Linie zeigt die spätere Schnittkante.</div>
     </div></div>`;
   modal({

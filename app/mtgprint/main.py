@@ -94,6 +94,15 @@ def _card_public(c: dict) -> dict:
     return out
 
 
+def _set_detection(card: dict, w: int, h: int) -> None:
+    m = imaging.match_convention(w, h, include_none=True)
+    card["detected_bleed_mm"] = round(m["bleed_mm"], 3)
+    card["detected_convention"] = m["name"]
+    card["detected_dpi"] = round(m["dpi"])
+    card["detected_mismatch_pct"] = round(m["mismatch"] * 100, 3)
+    card["detect_v"] = 3
+
+
 def _refresh_card(card: dict) -> dict:
     path = config.CARDS_DIR / card["file"]
     w, h = imaging.image_size(path)
@@ -101,8 +110,7 @@ def _refresh_card(card: dict) -> dict:
     card["suggested_mode"] = imaging.suggest_mode(w, h)
     rw, rh = (h, w) if int(card.get("rotation", 0)) % 180 == 90 else (w, h)
     # Bleed, den das Seitenverhältnis dieses Bildes nahelegt (mm pro Seite) – zur Kontrolle
-    card["detected_bleed_mm"] = round(imaging.detect_bleed_mm(rw, rh), 2)
-    card["detect_v"] = 2
+    _set_detection(card, rw, rh)
     card["dpi"] = round(imaging.effective_dpi(w, h, card))
     thumb = imaging.make_thumbnail(path, card, config.THUMBS_DIR / f"{card['id']}.jpg")
     card.update(fx=thumb["fx"], fy=thumb["fy"], synthetic_bleed=thumb["synthetic"])
@@ -154,11 +162,9 @@ def _place(project: dict, ids: list[str]) -> int:
 @app.get("/api/cards")
 def list_cards():
     cards = storage.get_cards()
-    missing = [c for c in cards.values() if c.get("detect_v") != 2]
-    for c in missing:  # Karten aus älteren Versionen nachrüsten
-        w, h = (c["h"], c["w"]) if int(c.get("rotation", 0)) % 180 == 90 else (c["w"], c["h"])
-        c["detected_bleed_mm"] = round(imaging.detect_bleed_mm(w, h), 2)
-        c["detect_v"] = 2
+    missing = [c for c in cards.values() if c.get("detect_v") != 3]
+    for c in missing:  # Karten aus älteren Versionen nachrüsten (inkl. neuer Vorschau)
+        _refresh_card(c)
     if missing:
         storage.save_cards(cards)
     return sorted((_card_public(c) for c in cards.values()), key=lambda c: c.get("created", 0))

@@ -37,14 +37,28 @@ def test_mpc_bleed_fractions_match_template():
 
 
 def test_auto_detect():
-    # Echtes MPC-Fill-Bild (Thrumming Hivepool): 63x88 mm @ ~800 DPI + 1/8"
-    assert imaging.detect_bleed_mm(2187, 2975) == pytest.approx(3.19, abs=0.02)
-    assert imaging.detect_bleed_mm(745, 1040) < 0.2
-    fx, fy = imaging.bleed_fractions("auto", 2187, 2975)
-    assert fx * 2187 == pytest.approx(100.6, abs=0.3) and fy * 2975 == pytest.approx(100.6, abs=0.3)
+    assert imaging.detect_bleed_inches(822, 1122) == pytest.approx(0.12, abs=0.001)
     assert imaging.suggest_mode(822, 1122) == "mpc"
     assert imaging.suggest_mode(745, 1040) == "none"
     assert imaging.bleed_fractions("auto", 745, 1040) == (0.0, 0.0)
+
+
+@pytest.mark.parametrize("w,h,name,bleed_px", [
+    (3288, 4488, "MPC-Vorlage", 144.0),   # exakt 1200 DPI
+    (2192, 2992, "MPC-Vorlage", 96.0),    # exakt 800 DPI (Horned Loch-Whale)
+    (822, 1122, "MPC-Vorlage", 36.0),     # MPC-Template 300 DPI
+    (2176, 2960, "63×88 mm + 1/8", 99.6),
+    (2187, 2975, "63×88 mm + 1/8", 100.1),
+    (2188, 2980, "MPC-Fill", 96.6),
+])
+def test_convention_detection_real_images(w, h, name, bleed_px):
+    """Bildgrößen aus echten MPC-Fill-Downloads des Nutzers."""
+    m = imaging.match_convention(w, h)
+    assert m["name"].startswith(name) or name in m["name"]
+    fx, fy = imaging.bleed_fractions("mpc", w, h)
+    assert fx * w == pytest.approx(bleed_px, abs=0.5)
+    # gleicher physischer Bleed auf beiden Achsen -> gleich viele Pixel
+    assert fy * h == pytest.approx(fx * w, rel=0.005)
 
 
 def _png(w, h, color=(200, 30, 30), alpha=False):

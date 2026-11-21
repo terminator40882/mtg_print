@@ -19,12 +19,45 @@ from . import config
 Image.MAX_IMAGE_PIXELS = 400_000_000  # große MPC-Scans (1200 DPI) zulassen
 
 BLEED_MODES = {
-    "mpc": "MPC-Fill / MPC (0,12\" ≈ 3,05 mm)",
-    "eighth": "1/8 Zoll (3,175 mm)",
-    "auto": "Automatisch (aus Seitenverhältnis)",
+    "mpc": "MPC-Fill (erkennt 0,12\" / 1/8\" pro Bild)",
+    "eighth": "Fest 1/8 Zoll (3,175 mm)",
+    "auto": "Automatisch (auch „kein Padding“)",
     "custom": "Eigene Breite (mm)",
     "none": "Kein Padding",
 }
+
+_IN = config.MM_PER_INCH
+# Bekannte Bleed-Konventionen: (Name, Kartenbreite in, Kartenhöhe in, Bleed in)
+CONVENTIONS = [
+    ("MPC-Vorlage 2,5×3,5\" + 0,12\"", 2.5, 3.5, 0.12),
+    ("2,5×3,5\" + 1/8\"", 2.5, 3.5, 0.125),
+    ("63×88 mm + 3,048 mm (MPC-Fill)", 63 / _IN, 88 / _IN, 3.048 / _IN),
+    ("63×88 mm + 1/8\"", 63 / _IN, 88 / _IN, 0.125),
+]
+NO_BLEED_CONVENTIONS = [
+    ("ohne Padding 63×88 mm", 63 / _IN, 88 / _IN, 0.0),
+    ("ohne Padding 2,5×3,5\"", 2.5, 3.5, 0.0),
+]
+MAX_MISMATCH = 0.005  # 0,5 % DPI-Unterschied zwischen den Achsen
+
+
+def match_convention(w: int, h: int, include_none: bool = False) -> dict:
+    """Welche Konvention erklärt die Bildgröße am besten?
+
+    Bei der richtigen Annahme ist die Auflösung (DPI) auf beiden Achsen gleich.
+    Echte Beispiele: 2192×2992 / 3288×4488 = MPC-Vorlage bei exakt 800 / 1200 DPI,
+    2176×2960 = 63×88 mm + 1/8\" bei 797 DPI.
+    """
+    if w > h:
+        w, h = h, w
+    best = None
+    for name, cw, ch, b in CONVENTIONS + (NO_BLEED_CONVENTIONS if include_none else []):
+        dx, dy = w / (cw + 2 * b), h / (ch + 2 * b)
+        mismatch = abs(dx / dy - 1)
+        if best is None or mismatch < best["mismatch"]:
+            best = {"name": name, "mismatch": mismatch, "dpi": (dx + dy) / 2,
+                    "fx": b / (cw + 2 * b), "fy": b / (ch + 2 * b), "bleed_mm": b * _IN}
+    return best
 
 NO_BLEED_RATIO = config.DEFAULT_CARD_W_MM / config.DEFAULT_CARD_H_MM            # 0.716
 MPC_RATIO = (config.MPC_CARD_W_IN + 2 * config.MPC_BLEED_IN) / (
@@ -84,17 +117,18 @@ def bleed_fractions(mode: str, w: int, h: int, custom_mm: float | None = None,
                     card_w_mm: float = config.DEFAULT_CARD_W_MM,
                     card_h_mm: float = config.DEFAULT_CARD_H_MM) -> tuple[float, float]:
     """Bleed-Anteil (fx, fy) pro Seite für ein Bild der Größe w x h (bereits rotiert)."""
-    if mode == "mpc":
-        return _fractions_from_inches(config.MPC_BLEED_IN)
+    if mode in ("mpc", "auto"):
+        m = match_convention(w, h, include_none=(mode == "auto"))
+        if m["mismatch"] > MAX_MISMATCH and mode == "mpc":
+            return _fractions_from_inches(config.MPC_BLEED_IN)  # unbekannt -> MPC-Vorlage
+        if m["mismatch"] > MAX_MISMATCH:
+            b = detect_bleed_mm(w, h, card_w_mm, card_h_mm)
+            return (0.0, 0.0) if b < 0.8 else (b / (card_w_mm + 2 * b), b / (card_h_mm + 2 * b))
+        return m["fx"], m["fy"]
     if mode == "eighth":
         return _fractions_from_inches(config.EIGHTH_INCH_BLEED_IN)
     if mode == "custom":
         b = max(0.0, float(custom_mm or 0.0))
-        return b / (card_w_mm + 2 * b), b / (card_h_mm + 2 * b)
-    if mode == "auto":
-        b = detect_bleed_mm(w, h, card_w_mm, card_h_mm)
-        if b < 0.8:
-            return 0.0, 0.0
         return b / (card_w_mm + 2 * b), b / (card_h_mm + 2 * b)
     return 0.0, 0.0
 
