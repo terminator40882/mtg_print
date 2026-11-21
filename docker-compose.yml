@@ -19,6 +19,7 @@ services:
       PRINT_QUALITY: ${PRINT_QUALITY:-high}
       PRINT_INPUT_SLOT: ${PRINT_INPUT_SLOT:-auto}
       CUPS_LOG_LEVEL: ${CUPS_LOG_LEVEL:-info}
+      WORKERS: ${WORKERS:-0}
       TZ: ${TZ:-Europe/Berlin}
     volumes:
       # Karten, Projekte, Kalibrierung und erzeugte PDFs bleiben hier erhalten

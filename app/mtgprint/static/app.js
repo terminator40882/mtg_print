@@ -666,9 +666,11 @@ function setupLibraryEvents() {
 async function bulkUpdate(patchFn) {
   const ids = [...S.libSel];
   if (!ids.length) return toast('Bitte zuerst Karten auswählen (Häkchen oder Strg+Klick)');
-  for (const id of ids) {
-    await api('PATCH', `/api/cards/${id}`, patchFn(S.cardMap[id]));
-  }
+  // gleiche Änderungen bündeln -> ein Request, Server verarbeitet parallel
+  const groups = {};
+  ids.forEach((id) => { const k = JSON.stringify(patchFn(S.cardMap[id])); (groups[k] = groups[k] || []).push(id); });
+  toast(`${ids.length} Karte(n) werden aktualisiert…`);
+  for (const [k, gids] of Object.entries(groups)) await api('POST', '/api/cards/bulk', { ids: gids, patch: JSON.parse(k) });
   await loadCards();
   renderLibrary();
   toast(`${ids.length} Karte(n) aktualisiert`, 'ok');

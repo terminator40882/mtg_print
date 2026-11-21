@@ -7,7 +7,9 @@ nach außen verlängert), damit auch Außenkanten sauber geschnitten werden kön
 """
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -285,3 +287,85 @@ def encode_for_pdf(p: Prepared, quality: str) -> io.BytesIO:
 
 
 QUALITY_MAX_DPI = {"original": None, "high": 1200, "standard": 600}
+
+
+# ---------------------------------------------------------------------------
+# PDF-Einbettung: Durchreichen, Aufbereiten, Cache
+# ---------------------------------------------------------------------------
+def _is_srgb(icc: bytes | None) -> bool:
+    if not icc:
+        return True
+    try:
+        desc = ImageCms.getProfileDescription(ImageCms.ImageCmsProfile(io.BytesIO(icc)))
+        return "srgb" in desc.lower()
+    except Exception:
+        return False
+
+
+def _passthrough(path: Path, card: dict, max_dpi: float | None, card_w_mm: float, card_h_mm: float):
+    """Original-JPEG unverändert einbetten, wenn keine Bearbeitung nötig ist
+    (schnell und ohne erneute JPEG-Kompression)."""
+    if int(card.get("rotation", 0)) % 360 or card.get("bleed_mode") == "none":
+        return None
+    with Image.open(path) as im:
+        if im.format != "JPEG" or im.mode not in ("RGB", "L"):
+            return None
+        if im.getexif().get(0x0112, 1) not in (0, 1):
+            return None
+        if not _is_srgb(im.info.get("icc_profile")):
+            return None
+        w, h = im.size
+    fx, fy = bleed_fractions(card.get("bleed_mode", "mpc"), w, h, card.get("bleed_mm"), card_w_mm, card_h_mm)
+    if fx <= 0 or fy <= 0:
+        return None
+    if max_dpi:
+        dpi = w * (1 - 2 * fx) / (card_w_mm / config.MM_PER_INCH)
+        if dpi > max_dpi * 1.02:
+            return None
+    return path, fx, fy
+
+
+def pdf_image(path: Path, card: dict, quality: str, max_dpi: float | None,
+              synthetic_bleed_mm: float, card_w_mm: float, card_h_mm: float) -> tuple[Path | bytes, float, float]:
+    """Liefert (Datei oder Bilddaten, fx, fy) für die PDF – mit Festplatten-Cache.
+
+    Bevorzugt einen Dateipfad: reportlab erkennt Duplikate dann am Pfad statt jedes
+    Bild bei jedem Einsatz komplett zu dekodieren und zu hashen."""
+    pt = _passthrough(path, card, max_dpi, card_w_mm, card_h_mm)
+    if pt:
+        return pt
+    st = path.stat()
+    key_src = json.dumps([path.name, st.st_size, int(st.st_mtime), quality, max_dpi, synthetic_bleed_mm,
+                          card_w_mm, card_h_mm, card.get("bleed_mode"), card.get("bleed_mm"),
+                          card.get("rotation"), card.get("fill_corners", True), card.get("bleed_fill"), 3])
+    key = hashlib.sha1(key_src.encode()).hexdigest()[:20]
+    data_path = config.CACHE_DIR / f"{key}.bin"
+    meta_path = config.CACHE_DIR / f"{key}.json"
+    try:
+        meta = json.loads(meta_path.read_text())
+        if data_path.exists():
+            return data_path, meta["fx"], meta["fy"]
+    except (OSError, ValueError, KeyError):
+        pass
+    p = prepare(path, card, max_dpi=max_dpi, synthetic_bleed_mm=synthetic_bleed_mm,
+                card_w_mm=card_w_mm, card_h_mm=card_h_mm)
+    data = encode_for_pdf(p, quality).getvalue()
+    try:
+        config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = data_path.with_suffix(".tmp")
+        tmp.write_bytes(data)
+        tmp.replace(data_path)
+        meta_path.write_text(json.dumps({"fx": p.fx, "fy": p.fy}))
+        return data_path, p.fx, p.fy
+    except OSError:
+        return data, p.fx, p.fy
+
+
+def prune_cache(max_bytes: int = 3 * 1024 ** 3) -> None:
+    files = sorted(config.CACHE_DIR.glob("*.bin"), key=lambda f: f.stat().st_atime, reverse=True)
+    total = 0
+    for f in files:
+        total += f.stat().st_size
+        if total > max_bytes:
+            f.unlink(missing_ok=True)
+            f.with_suffix(".json").unlink(missing_ok=True)

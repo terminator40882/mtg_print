@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from reportlab import rl_config
 
 from reportlab.lib.colors import Color, HexColor
 from reportlab.lib.utils import ImageReader
@@ -13,6 +17,10 @@ from . import calibration, config, imaging
 from .layout import geometry, normalize_layout
 
 PT = 72.0 / 25.4  # PDF-Punkte pro mm
+
+# Bilder binär einbetten statt als ASCII85-Text: reportlab kodiert ASCII85 ohne
+# C-Beschleuniger in reinem Python – das war >80 % der gesamten PDF-Zeit.
+rl_config.useA85 = 0
 
 
 class Page:
@@ -118,32 +126,47 @@ def draw_label(pg: Page, geo: dict, layout: dict, text: str):
 
 
 class ImageCache:
-    """Bereitet jedes Kartenbild einmal pro PDF auf; reportlab dedupliziert identische Bilder."""
+    """Bereitet jedes Kartenbild einmal pro PDF auf – parallel auf allen Kernen.
 
-    def __init__(self, cards: dict, layout: dict):
+    Pillow gibt beim Dekodieren, Skalieren und Kodieren den GIL frei, daher
+    reichen Threads. reportlab dedupliziert identische Bilder im PDF.
+    """
+
+    def __init__(self, cards: dict, layout: dict, max_dpi: float | None = None):
         self.cards = cards
         self.layout = layout
-        self._cache: dict[str, tuple] = {}
+        q = layout["quality"]
+        dpi = imaging.QUALITY_MAX_DPI[q]
+        if max_dpi:
+            dpi = min(dpi, max_dpi) if dpi else max_dpi
+        self.max_dpi = dpi
+        self._cache: dict[str, tuple | None] = {}
 
-    def get(self, card_id: str):
-        if card_id in self._cache:
-            return self._cache[card_id]
+    def _load(self, card_id: str):
         card = self.cards.get(card_id)
         if not card:
-            self._cache[card_id] = None
             return None
         path = config.CARDS_DIR / card["file"]
         if not path.exists():
-            self._cache[card_id] = None
             return None
-        q = self.layout["quality"]
-        prep = imaging.prepare(path, card, max_dpi=imaging.QUALITY_MAX_DPI[q],
-                               synthetic_bleed_mm=self.layout["synthetic_bleed"],
-                               card_w_mm=self.layout["card_w"], card_h_mm=self.layout["card_h"])
-        reader = ImageReader(imaging.encode_for_pdf(prep, q))
-        entry = (reader, prep.fx, prep.fy)
-        self._cache[card_id] = entry
-        return entry
+        data, fx, fy = imaging.pdf_image(path, card, self.layout["quality"], self.max_dpi,
+                                         self.layout["synthetic_bleed"], self.layout["card_w"],
+                                         self.layout["card_h"])
+        src = str(data) if isinstance(data, Path) else ImageReader(io.BytesIO(data))
+        return src, fx, fy
+
+    def prefetch(self, card_ids) -> None:
+        todo = [c for c in dict.fromkeys(card_ids) if c and c not in self._cache]
+        if not todo:
+            return
+        with ThreadPoolExecutor(max_workers=min(config.WORKERS, len(todo))) as ex:
+            for cid, entry in zip(todo, ex.map(self._load, todo)):
+                self._cache[cid] = entry
+
+    def get(self, card_id: str):
+        if card_id not in self._cache:
+            self._cache[card_id] = self._load(card_id)
+        return self._cache[card_id]
 
 
 def draw_card(pg: Page, slot: dict, entry: tuple):
@@ -167,14 +190,16 @@ def _new_canvas(path: Path, geo: dict, title: str) -> rl_canvas.Canvas:
 
 
 def build_project_pdf(project: dict, cards: dict, out: Path, profile: dict | None = None,
-                      pages: list[int] | None = None) -> dict:
+                      pages: list[int] | None = None, max_dpi: float | None = None) -> dict:
+    """max_dpi: zusätzliche Obergrenze, z.B. die Rasterauflösung des Druckers beim Drucken."""
     layout = normalize_layout(project.get("layout"))
     geo = geometry(layout)
     all_pages = project.get("pages", [])
     indices = pages if pages is not None else list(range(len(all_pages)))
     indices = [i for i in indices if 0 <= i < len(all_pages)]
     c = _new_canvas(out, geo, project.get("name", "MTG Proxies"))
-    cache = ImageCache(cards, layout)
+    cache = ImageCache(cards, layout, max_dpi)
+    cache.prefetch(s for pi in indices for s in all_pages[pi])
     missing = set()
     n_cards = 0
     for n, pi in enumerate(indices, start=1):
@@ -200,6 +225,7 @@ def build_project_pdf(project: dict, cards: dict, out: Path, profile: dict | Non
         pg.text(geo["page_w"] / 2, 40, "Keine Seiten ausgewählt", 14, align="center")
         c.showPage()
     c.save()
+    imaging.prune_cache()
     return {"pages": len(indices), "cards": n_cards, "missing": sorted(missing)}
 
 

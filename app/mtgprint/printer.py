@@ -225,6 +225,22 @@ def ppd_options() -> list[dict]:
     return [o for o in opts if o["choices"] and o["key"] not in hidden]
 
 
+def raster_dpi(quality_choice: str | None = None) -> int:
+    """Rasterauflösung, die CUPS für die gewählte Qualität an den Drucker schickt."""
+    path = ppd_path()
+    if not path.exists():
+        return 600
+    text = path.read_text(encoding="utf-8", errors="replace")
+    q = quality_choice or "High"
+    m = re.search(r"\*cupsPrintQuality " + re.escape(q) + r"[^:]*:.*?HWResolution\[(\d+)\s+(\d+)\]", text, re.S)
+    if not m:
+        m = re.search(r"HWResolution\[(\d+)\s+(\d+)\]", text)
+    if not m:
+        m = re.search(r"\*DefaultResolution:\s*(\d+)", text)
+        return int(m.group(1)) if m else 600
+    return max(int(m.group(1)), int(m.group(2)))
+
+
 def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
 

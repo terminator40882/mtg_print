@@ -15,6 +15,7 @@ CARDS_DIR = DATA_DIR / "cards"          # Originalbilder
 THUMBS_DIR = DATA_DIR / "thumbs"        # Vorschaubilder (inkl. Bleed)
 PROJECTS_DIR = DATA_DIR / "projects"    # Projekt-JSONs
 EXPORTS_DIR = DATA_DIR / "exports"      # erzeugte PDFs
+CACHE_DIR = DATA_DIR / "cache"          # aufbereitete Bilder für PDFs (beschleunigt Wiederholungen)
 SETTINGS_FILE = DATA_DIR / "settings.json"
 CARDS_FILE = DATA_DIR / "cards.json"
 
@@ -61,9 +62,12 @@ PAPER_SIZES_MM = {
     "Letter": (215.9, 279.4),
 }
 
+# Parallelität (Bildaufbereitung, Thumbnails). 0 = alle Kerne
+WORKERS = int(_env("WORKERS", "0") or 0) or (os.cpu_count() or 2)
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
 
 
 def ensure_dirs() -> None:
-    for d in (DATA_DIR, CARDS_DIR, THUMBS_DIR, PROJECTS_DIR, EXPORTS_DIR):
+    for d in (DATA_DIR, CARDS_DIR, THUMBS_DIR, PROJECTS_DIR, EXPORTS_DIR, CACHE_DIR):
         d.mkdir(parents=True, exist_ok=True)

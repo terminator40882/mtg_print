@@ -159,3 +159,23 @@ def test_mpc_preset_matches_mpcfill_definition():
     # Abweichung in mm auf der gedruckten Karte (63 mm Breite / 88 mm Höhe)
     assert abs(fx - mpcfill_fx) * 69.1 < 0.05
     assert abs(fy - mpcfill_fy) * 94.1 < 0.05
+
+
+def test_pdf_image_passthrough_and_cache(tmp_path):
+    from mtgprint import config
+    p = config.CARDS_DIR / "j.jpg"
+    _png(822, 1122).save(p, "JPEG", quality=90)
+    card = {"bleed_mode": "mpc"}
+    src, fx, fy = imaging.pdf_image(p, card, "high", 1200, 3.0, 63, 88)
+    assert src == p  # Original-JPEG wird unverändert eingebettet
+    # Drehung erzwingt Aufbereitung -> landet im Cache, zweiter Aufruf liefert dieselbe Datei
+    card = {"bleed_mode": "mpc", "rotation": 180}
+    src1, _, _ = imaging.pdf_image(p, card, "high", 1200, 3.0, 63, 88)
+    src2, _, _ = imaging.pdf_image(p, card, "high", 1200, 3.0, 63, 88)
+    assert src1 != p and src1 == src2 and src1.parent == config.CACHE_DIR
+    # Druckauflösung kleiner als Bildauflösung -> herunterskaliert
+    big = config.CARDS_DIR / "big.jpg"
+    _png(3288, 4488).save(big, "JPEG")
+    src3, _, _ = imaging.pdf_image(big, {"bleed_mode": "mpc"}, "high", 600, 3.0, 63, 88)
+    from PIL import Image
+    assert Image.open(src3).size[0] == pytest.approx(3288 / 2, abs=2)

@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -118,10 +119,7 @@ def _refresh_card(card: dict) -> dict:
     return card
 
 
-def _ingest(name: str, data: bytes, opts: dict, cards: dict) -> tuple[dict, bool]:
-    digest = hashlib.sha1(data).hexdigest()[:16]
-    if digest in cards:
-        return cards[digest], False
+def _build_card(name: str, data: bytes, opts: dict, digest: str) -> dict:
     ext = Path(name).suffix.lower()
     if ext == ".jpeg":
         ext = ".jpg"
@@ -143,7 +141,14 @@ def _ingest(name: str, data: bytes, opts: dict, cards: dict) -> tuple[dict, bool
     m = re.search(r"([A-Za-z0-9_\-]{25,})", Path(name).stem)
     if m:
         card["drive_id"] = m.group(1)
-    _refresh_card(card)
+    return _refresh_card(card)
+
+
+def _ingest(name: str, data: bytes, opts: dict, cards: dict) -> tuple[dict, bool]:
+    digest = hashlib.sha1(data).hexdigest()[:16]
+    if digest in cards:
+        return cards[digest], False
+    card = _build_card(name, data, opts, digest)
     cards[digest] = card
     return card, True
 
@@ -163,8 +168,9 @@ def _place(project: dict, ids: list[str]) -> int:
 def list_cards():
     cards = storage.get_cards()
     missing = [c for c in cards.values() if c.get("detect_v") != 3]
-    for c in missing:  # Karten aus älteren Versionen nachrüsten (inkl. neuer Vorschau)
-        _refresh_card(c)
+    if missing:  # Karten aus älteren Versionen nachrüsten (inkl. neuer Vorschau), parallel
+        with ThreadPoolExecutor(max_workers=config.WORKERS) as ex:
+            list(ex.map(_refresh_card, missing))
     if missing:
         storage.save_cards(cards)
     return sorted((_card_public(c) for c in cards.values()), key=lambda c: c.get("created", 0))
@@ -187,16 +193,11 @@ def upload_cards(
     cards = storage.get_cards()
     added, existing, errors, order = [], [], [], []
 
+    pending: list[tuple[str, bytes]] = []
+
     def handle(name: str, data: bytes):
-        if Path(name).suffix.lower() not in config.IMAGE_EXTENSIONS:
-            return
-        try:
-            card, new = _ingest(name, data, opts, cards)
-            (added if new else existing).append(card["id"])
-            order.append(card["id"])
-        except Exception as e:
-            log.exception("Upload fehlgeschlagen: %s", name)
-            errors.append(f"{Path(name).name}: {e}")
+        if Path(name).suffix.lower() in config.IMAGE_EXTENSIONS:
+            pending.append((name, data))
 
     for f in files:
         name = f.filename or "upload"
@@ -220,6 +221,29 @@ def upload_cards(
                     errors.append(f"{name}: keine gültige ZIP-Datei")
         else:
             handle(name, f.file.read())
+    # Thumbnails & Analyse parallel auf allen Kernen
+    def work(item):
+        name, data = item
+        digest = hashlib.sha1(data).hexdigest()[:16]
+        if digest in cards:
+            return name, digest, None, None
+        try:
+            return name, digest, _build_card(name, data, opts, digest), None
+        except Exception as e:
+            log.exception("Upload fehlgeschlagen: %s", name)
+            return name, digest, None, e
+
+    with ThreadPoolExecutor(max_workers=config.WORKERS) as ex:
+        for name, digest, card, err in ex.map(work, pending):
+            if err:
+                errors.append(f"{Path(name).name}: {err}")
+                continue
+            if card and digest not in cards:
+                cards[digest] = card
+                added.append(digest)
+            else:
+                existing.append(digest)
+            order.append(digest)
     storage.save_cards(cards)
 
     placed = 0
@@ -246,7 +270,7 @@ def bulk_cards(payload: dict = Body(...)):
 def _update_cards(ids: list[str], patch: dict) -> list[dict]:
     cards = storage.get_cards()
     allowed = {"name", "bleed_mode", "bleed_mm", "fill_corners", "rotation", "bleed_fill"}
-    out = []
+    out, to_refresh = [], []
     for cid in ids:
         card = cards[cid]
         relevant = False
@@ -265,8 +289,10 @@ def _update_cards(ids: list[str], patch: dict) -> list[dict]:
                 card[k] = v
                 relevant = relevant or k != "name"
         if relevant:
-            _refresh_card(card)
+            to_refresh.append(card)
         out.append(card)
+    with ThreadPoolExecutor(max_workers=config.WORKERS) as ex:
+        list(ex.map(_refresh_card, to_refresh))
     storage.save_cards(cards)
     return out
 
@@ -399,7 +425,7 @@ def _cleanup_exports(keep: int = 40):
         f.unlink(missing_ok=True)
 
 
-def _render_project(pid: str, payload: dict) -> tuple[Path, dict, dict]:
+def _render_project(pid: str, payload: dict, max_dpi: float | None = None) -> tuple[Path, dict, dict]:
     p = storage.get_project(pid)
     pages = parse_pages(payload.get("pages"), len(p["pages"]))
     profile = None
@@ -409,7 +435,7 @@ def _render_project(pid: str, payload: dict) -> tuple[Path, dict, dict]:
     stamp = time.strftime("%Y%m%d-%H%M%S")
     suffix = "" if profile and profile["id"] != "default" else "_unkalibriert"
     out = config.EXPORTS_DIR / f"{_slug(p['name'])}_{stamp}{suffix}.pdf"
-    result = pdfgen.build_project_pdf(p, cards, out, profile, pages)
+    result = pdfgen.build_project_pdf(p, cards, out, profile, pages, max_dpi=max_dpi)
     _cleanup_exports()
     return out, result, p
 
@@ -422,11 +448,14 @@ def project_pdf(pid: str, payload: dict = Body(default={})):
 
 @app.post("/api/projects/{pid}/print")
 def project_print(pid: str, payload: dict = Body(default={})):
-    out, result, p = _render_project(pid, payload)
-    if result["cards"] == 0:
-        raise ValueError("Die ausgewählten Seiten enthalten keine Karten")
     s = storage.get_settings()
     opts = printer.effective_options({**s["print"]["options"], **(payload.get("options") or {})})
+    # Bilder direkt auf die Rasterauflösung des Druckers bringen (hochwertiges Lanczos
+    # statt Ghostscript-Abtastung, deutlich kleinere Druckdaten)
+    dpi = printer.raster_dpi(opts.get("cupsPrintQuality"))
+    out, result, p = _render_project(pid, payload, max_dpi=dpi)
+    if result["cards"] == 0:
+        raise ValueError("Die ausgewählten Seiten enthalten keine Karten")
     job = printer.print_pdf(out, opts, payload.get("copies", 1), title=p["name"])
     return {**result, "job": job, "options": opts, "url": f"/api/exports/{out.name}"}
 
