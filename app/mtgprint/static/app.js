@@ -690,7 +690,7 @@ function openCardDetail(id) {
       <div class="full muted" style="font-size:12px;line-height:1.6">
         Datei: ${esc(c.original_name)}<br>${c.w} × ${c.h} px · effektiv <b>${c.dpi} DPI</b><br>
         Seitenverhältnis spricht für: <b>${c.suggested_mode === 'none' ? 'ohne Padding' : 'mit Padding (MPC)'}</b><br>
-        Bleed laut Seitenverhältnis: <b>${fmt(c.detected_bleed_mm ?? 0, 2)} mm</b> pro Seite (MPC-Vorgabe 3,05 mm, 1/8″ = 3,18 mm)<br>
+        Bleed laut Seitenverhältnis: <b>${fmt(c.detected_bleed_mm ?? 0, 2)} mm</b> pro Seite bei 63 × 88 mm Karte (MPC-Vorgabe 3,05 mm, 1/8″ = 3,18 mm)<br>
         Die gestrichelte Linie zeigt die spätere Schnittkante.</div>
     </div></div>`;
   modal({

@@ -37,7 +37,11 @@ def test_mpc_bleed_fractions_match_template():
 
 
 def test_auto_detect():
-    assert imaging.detect_bleed_inches(822, 1122) == pytest.approx(0.12, abs=0.001)
+    # Echtes MPC-Fill-Bild (Thrumming Hivepool): 63x88 mm @ ~800 DPI + 1/8"
+    assert imaging.detect_bleed_mm(2187, 2975) == pytest.approx(3.19, abs=0.02)
+    assert imaging.detect_bleed_mm(745, 1040) < 0.2
+    fx, fy = imaging.bleed_fractions("auto", 2187, 2975)
+    assert fx * 2187 == pytest.approx(100.6, abs=0.3) and fy * 2975 == pytest.approx(100.6, abs=0.3)
     assert imaging.suggest_mode(822, 1122) == "mpc"
     assert imaging.suggest_mode(745, 1040) == "none"
     assert imaging.bleed_fractions("auto", 745, 1040) == (0.0, 0.0)

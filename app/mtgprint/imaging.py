@@ -61,6 +61,17 @@ def detect_bleed_inches(w: int, h: int) -> float:
     return max(0.0, min(b, 0.3))
 
 
+def detect_bleed_mm(w: int, h: int, card_w_mm: float = config.DEFAULT_CARD_W_MM,
+                    card_h_mm: float = config.DEFAULT_CARD_H_MM) -> float:
+    """Gleichmäßiger Bleed (mm pro Seite) aus dem Seitenverhältnis, Karte = 63 x 88 mm
+    (wie MPC-Fill). Aus w = k*63 + 2b, h = k*88 + 2b folgt k = (h-w)/25 px/mm."""
+    if h <= w:
+        return 0.0
+    k = (h - w) / (card_h_mm - card_w_mm)
+    b = (w - card_w_mm * k) / 2 / k
+    return max(0.0, min(b, 8.0))
+
+
 def suggest_mode(w: int, h: int) -> str:
     """Welche Einstellung passt zum Seitenverhältnis? ('mpc' oder 'none')."""
     if w > h:
@@ -81,10 +92,10 @@ def bleed_fractions(mode: str, w: int, h: int, custom_mm: float | None = None,
         b = max(0.0, float(custom_mm or 0.0))
         return b / (card_w_mm + 2 * b), b / (card_h_mm + 2 * b)
     if mode == "auto":
-        b_in = detect_bleed_inches(w, h)
-        if b_in < 0.03:
+        b = detect_bleed_mm(w, h, card_w_mm, card_h_mm)
+        if b < 0.8:
             return 0.0, 0.0
-        return _fractions_from_inches(b_in)
+        return b / (card_w_mm + 2 * b), b / (card_h_mm + 2 * b)
     return 0.0, 0.0
 
 
